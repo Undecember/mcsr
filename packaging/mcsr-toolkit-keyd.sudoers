@@ -1,0 +1,1 @@
+<desktop-user> ALL=(root) NOPASSWD: /usr/local/libexec/mcsr-toolkit-keyd clear

@@ -4,18 +4,20 @@
 
 **Goal:** Build a local Ubuntu GNOME Wayland web toolkit that downloads the official MCSR tools, applies focus-aware keyd mappings, keeps all MCSRLauncher instance controls aligned, and manages window size and optional eye zoom sensitivity.
 
-**Architecture:** A Python user service serves a small browser UI and owns profile, download, instance, and apply logic. A keyd include fragment plus application mapper handle focused Minecraft input; a GNOME Shell extension handles focused-window resizing and sends preset events to the service for optional `maccel` changes. Privileged keyd installation is a narrow separate operation.
+**Architecture:** A Python user service serves a small browser UI and owns profile, download, instance, apply, and focus logic. A dedicated keyd config holds an inactive chat layer. The GNOME Shell extension reports effective input focus and handles focused-window resizing; the user service applies dynamic game bindings on Minecraft focus and uses the fixed root helper to restart keyd on blur. Privileged keyd installation is a narrow separate operation.
 
 **Tech Stack:** Python 3.11+, FastAPI, Uvicorn, Pydantic, HTTPX, pytest, Ruff, mypy, vanilla HTML/CSS/JavaScript, GNOME Shell JavaScript (GJS), keyd, optional maccel. Pin Python dependencies in `pyproject.toml` and use no frontend build tool.
 
 **Spec:** `docs/superpowers/specs/2026-10-03-mcsr-toolkit-design.md`
+
+**Recovery update (2026-10-04):** Follow [the keyd restart recovery addendum](2026-10-04-keyd-restart-recovery.md) for all keyd cleanup, install, restore, rollback, deployment, and live verification. Use its reset-and-helper-clear sequence and bounded service restart; the older direct reload steps below are obsolete. Task 9 remains gated until the addendum's supervised proof passes.
 
 ## Global Constraints
 
 - Target Ubuntu GNOME on Wayland with keyd already installed; support one desktop user on one device.
 - Bind the HTTP server to `127.0.0.1`; run it as the user, never as root.
 - Match any focused Minecraft window; other applications must receive ordinary keys.
-- Keep toolkit keyd rules in a dedicated include fragment and preserve existing device configs and unrelated `app.conf` entries.
+- Keep toolkit keyd rules in a dedicated config and fragment. Refuse conflicting existing device configs and leave `app.conf` untouched.
 - Update every MCSRLauncher-managed instance, including instances discovered later; do not touch other launchers.
 - Ninjabrain Bot mappings emit shortcuts already configured in that bot; do not edit its preferences.
 - Search snippets are left-hand typing goals, not text-expansion macros.
@@ -31,7 +33,7 @@
 | `src/mcsr_toolkit/models.py`, `profile.py` | Typed profile and persisted user state |
 | `src/mcsr_toolkit/bindings.py` | Physical-to-emitted mapping, control preview, conflicts |
 | `src/mcsr_toolkit/instances.py`, `options.py` | Launcher discovery and lossless `options.txt` edits |
-| `src/mcsr_toolkit/keyd.py`, `privileged.py` | Keyd fragment, app mapper section, validation, narrow install |
+| `src/mcsr_toolkit/keyd.py`, `privileged.py`, `focus.py`, `focus_watchdog.py`, `focus_pipe.py` | Restricted keyd rules, narrow install, effective focus, modal and heartbeat recovery |
 | `src/mcsr_toolkit/resize.py`, `extension/` | Resize preset IPC, GNOME focus and hotkeys, maccel state |
 | `src/mcsr_toolkit/downloads.py` | Official release lookup and safe JAR download |
 | `src/mcsr_toolkit/apply.py` | Backup, apply, deferred edits, restore, per-instance results |
@@ -42,7 +44,7 @@
 
 These five cases deserve explicit tests in their owning tasks:
 
-1. An existing keyd config already claims the keyboard: Task 4 must preserve it and reject conflicting or unrecognized include directives.
+1. An existing keyd config already claims the keyboard: Task 4 must preserve it and reject installation.
 2. `options.txt` differs between launcher instances or contains duplicate keys: Task 3 must preserve unrelated lines and report ambiguity per instance.
 3. A profile is applied twice or an instance is created afterward: Tasks 3 and 7 must avoid remapping drift and bring the new instance up to date.
 4. Minecraft loses focus while chat or eye zoom is active: Tasks 4 and 5 must restore ordinary keys and normal sensitivity.
@@ -56,8 +58,8 @@ These five cases deserve explicit tests in their owning tasks:
 
 **Interfaces:** Produces the tested Minecraft window predicate (GNOME window class/title and keyd mapper class/title), keyd version and config syntax, the shell resize method, and a written pass/fail record consumed by Tasks 4 and 5.
 
-- [ ] Inspect `keyd --version`, `keyd check`, `keyd-application-mapper`, the installed GNOME Shell version, and a live Minecraft window. Record actual window identifiers; do not guess from `java` alone.
-- [ ] Write a disposable keyd fragment and app mapper section that demonstrate focus-on/focus-off remapping plus `T`/`/` entry and `Enter`/`Esc` exit, including loss of focus while chat is open. Run `keyd check <probe-config>` before activation.
+- [ ] Inspect the installed keyd commands, mapper, GNOME Shell version, and a live Minecraft window. Record actual window identifiers; do not guess from `java` alone.
+- [ ] Record the initial mapper's failure on Shell authentication modals and toggled chat state. Validate revised focus events, the reset-and-helper-clear sequence on blur, chat entry/exit, and modal entry/exit with harmless live remaps. This Ubuntu keyd build has no `check` command; validate the restricted generated grammar before activation.
 - [ ] Build the minimal GNOME extension probe that resizes only the focused Minecraft window with Mutter's `Meta.Window.move_resize_frame` and reports its resulting frame rectangle.
 - [ ] Run the probe on Ubuntu GNOME Wayland and record commands, observed results, versions, cleanup, and the final predicate in `integration/keyd-focus-probe.md`. Stop and revise the design/plan if focus or chat state cannot be reset reliably. Do not continue to the UI on a failed probe.
 
@@ -86,11 +88,11 @@ These five cases deserve explicit tests in their owning tasks:
 
 **Files:** Create `src/mcsr_toolkit/keyd.py`, `src/mcsr_toolkit/privileged.py`, `tests/test_keyd.py`, `tests/test_privileged.py`.
 
-**Interfaces:** `render_keyd_fragment(profile: Profile) -> str`; `update_app_conf(existing: str, profile: Profile, predicate: WindowPredicate) -> str`; `install_keyd(fragment: str, device_config: Path, app_conf: Path) -> InstallResult`. The privileged entry point accepts only the toolkit fragment and a verified existing config under `/etc/keyd/`, then runs `keyd check` and `keyd reload` with fixed arguments.
+**Interfaces:** `render_keyd_fragment(profile: Profile) -> str`; `game_bindings(profile: Profile) -> list[str]`; `KeydCommands.activate_game/clear_state`; `FocusController.on_focus/on_disconnect`; `KeydInstaller.install/restore`. The root-owned helper accepts only a restricted toolkit fragment and fixed targets under `/etc/keyd/`, then restarts keyd with fixed arguments.
 
-- [ ] Write tests for game remaps, chat identity bindings and entry/exit actions, focus reset, pre-existing `app.conf` sections, an existing keyboard device config, duplicate or unrecognized include markers, invalid keyd output, and a failed reload that restores the previous files. Run them red.
-- [ ] Implement the probe-proven config syntax from Task 1. Store rules in a dedicated include fragment, add one managed include to the selected active device config, and add one managed Minecraft section to `app.conf`; preserve all other content. Do not emit keyd `command(...)` actions or shell text from profile input.
-- [ ] Implement a narrow privileged helper using fixed target paths, temporary writes, backup/rollback, `keyd check`, and `keyd reload`. The user service invokes it through one authenticated elevation step, not by running as root. Reject path traversal and symlink target changes.
+- [ ] Write tests for game remaps, chat identity bindings and entry/exit actions, focus/modal reset, heartbeat failure, an existing keyboard config, invalid keyd output, and a failed restart that restores previous files. Run them red.
+- [ ] Implement the probe-proven restricted config syntax. Keep chat rules in an inactive toolkit fragment and apply game bindings only for effective Minecraft focus. Never emit keyd `command(...)` or shell text from profile input.
+- [ ] Implement a self-contained root-owned helper with fixed target paths, temporary writes, backup/rollback, restricted grammar validation, and a bounded keyd service restart with health checking. The user service invokes it through authenticated elevation, not by running as root. Reject path traversal and symlink target changes.
 - [ ] Run `pytest tests/test_keyd.py tests/test_privileged.py -q`; expected: all pass. On the probe machine, repeat the focus/chat checks with generated rules and verify the keyd panic sequence remains documented.
 
 ### Task 5: Resize the focused window and manage eye zoom sensitivity
@@ -151,11 +153,11 @@ These five cases deserve explicit tests in their owning tasks:
 **Interfaces:** Produces a runnable installation guide and a recorded acceptance result for the spec.
 
 - [ ] Document installation, keyd group/elevation requirements, GNOME extension enablement, optional maccel, launcher-root override, service startup, backup/restore, and troubleshooting for failed focus or resize detection. Verify each command on the target Ubuntu GNOME Wayland machine.
-- [ ] Run `pytest -q`, `ruff check .`, `mypy src`, `keyd check` on a generated candidate, `glib-compile-schemas --strict --dry-run extension/schemas`, and the live acceptance procedure in `integration/acceptance-wayland.md`. Record tool versions, commands, and outcomes; repair concrete failures and rerun affected checks.
+- [ ] Run `pytest -q`, `ruff check .`, `mypy src`, the restricted keyd validator and live daemon candidate check, `glib-compile-schemas --strict --dry-run extension/schemas`, and the live acceptance procedure in `integration/acceptance-wayland.md`. Record tool versions, commands, and outcomes; repair concrete failures and rerun affected checks.
 - [ ] Review the final diff against the spec, including preservation of unrelated files and the five Review Focus cases. Leave Git changes uncommitted unless the user separately requests a commit.
 
 ## Source notes for implementers
 
 - MCSRLauncher source uses `launcher/instances/<id>/instance.json`, and `BasicInstance.getGamePath()` chooses `minecraft/` with a legacy `.minecraft/` fallback: [InstanceManager](https://github.com/MCSRLauncher/Launcher/blob/main/src/main/kotlin/com/redlimerl/mcsrlauncher/launcher/InstanceManager.kt), [BasicInstance](https://github.com/MCSRLauncher/Launcher/blob/main/src/main/kotlin/com/redlimerl/mcsrlauncher/data/instance/BasicInstance.kt).
-- keyd permits a device ID in only one top-level `.conf`; use its include mechanism and `keyd check` before reload: [keyd manual](https://github.com/rvaiya/keyd/blob/master/docs/keyd.scdoc).
+- keyd permits a device ID in only one top-level `.conf`; this first release refuses competing configs. Ubuntu keyd 2.5.0 lacks `check`, so restrict candidate grammar and verify a live service restart: [keyd manual](https://github.com/rvaiya/keyd/blob/master/docs/keyd.scdoc).
 - Exact Wayland window sizing is available through Mutter's `Meta.Window.move_resize_frame`: [Mutter API](https://gnome.pages.gitlab.gnome.org/mutter/meta/class.Window.html).

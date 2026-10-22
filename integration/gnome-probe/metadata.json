@@ -1,0 +1,6 @@
+{
+  "name": "MCSR Toolkit focus probe",
+  "description": "Temporary focus and resize compatibility check",
+  "uuid": "mcsr-toolkit-probe@local",
+  "shell-version": ["50"]
+}

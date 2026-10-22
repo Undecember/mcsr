@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcsr-toolkit"
+version = "0.1.0"
+description = "Local MCSR setup and keybind configurator for Ubuntu GNOME Wayland"
+requires-python = ">=3.11"
+dependencies = [
+  "dbus-next==0.2.3",
+  "fastapi==0.142.2",
+  "httpx==0.28.1",
+  "pydantic==2.13.5",
+  "uvicorn==0.54.0",
+]
+
+[project.scripts]
+mcsr-toolkit = "mcsr_toolkit.__main__:main"
+
+[project.optional-dependencies]
+dev = ["mypy==1.20.2", "pytest==9.1.1", "ruff==0.16.10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+packages = ["mcsr_toolkit"]

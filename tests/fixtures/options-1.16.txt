@@ -1,0 +1,8 @@
+version:2586
+lang:en_us
+key_key.forward:key.keyboard.w
+key_key.back:key.keyboard.s
+key_key.left:key.keyboard.a
+key_key.right:key.keyboard.d
+key_key.inventory:key.keyboard.e
+gamma:1.0
