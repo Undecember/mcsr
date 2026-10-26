@@ -4,8 +4,8 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
-ExecStart=/usr/bin/env mcsr-toolkit
+Environment=PATH=/usr/local/bin:/usr/bin
+ExecStart=/usr/local/bin/mcsr-toolkit serve
 Restart=on-failure
 RestartSec=3
 

@@ -1,0 +1,1 @@
+@DESKTOP_USER@ ALL=(root) NOPASSWD: /usr/local/libexec/mcsr-toolkit privileged maccel eye, /usr/local/libexec/mcsr-toolkit privileged maccel restore
