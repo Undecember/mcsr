@@ -1,2 +1,0 @@
-# Replace @DESKTOP_USER@ with the reviewed desktop login before validation.
-@DESKTOP_USER@ ALL=(root) NOPASSWD: /usr/local/libexec/mcsr-toolkit-maccel eye, /usr/local/libexec/mcsr-toolkit-maccel restore

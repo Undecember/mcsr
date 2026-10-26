@@ -1,11 +1,16 @@
 # Rust single-binary release checklist
 
-Status: **supervised Rust device acceptance in progress**. Completed and failed live checks are recorded in [the Wayland record](../integration/acceptance-wayland.md); the remaining checks below still gate release. The first release target is Ubuntu GNOME Shell 50 on x86_64 Wayland.
+Status: **source cutover complete; supervised Rust device acceptance in progress**. Completed and failed live checks are recorded in [the Wayland record](../integration/acceptance-wayland.md); logout/login, guided uninstall, and exact final artifact verification remain release gates. The first release target is Ubuntu GNOME Shell 50 on x86_64 Wayland.
+
+## Source cutover
+
+- [x] The user chose Rust source removal before the remaining live gates. Python package source, tests, metadata, and obsolete helper templates have been removed; Git history and dated acceptance records retain the migration evidence.
+- [x] Active setup and developer guidance now describe the Rust executable. The Rust installer still refuses an active Python-style service and unresolved Python-era recovery. Preserve Python-era user data, profiles, backups, and root recovery evidence through acceptance and uninstall.
 
 ## Candidate and reproducible checks
 
 - [ ] Confirm the candidate comes from the reviewed source and `Cargo.lock`, on the intended commit.
-- [ ] On a clean checkout, run `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, `node tests/extension_harness.cjs`, `node tests/ui_harness.cjs`, and `glib-compile-schemas --strict --dry-run extension/schemas`.
+- [ ] On a clean checkout, run `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked`, `node tests/extension_harness.cjs`, `node tests/ui_harness.cjs`, `node integration/live-ui-acceptance.mjs self-test`, and `glib-compile-schemas --strict --dry-run extension/schemas`.
 - [ ] Run `cargo build --release --locked` and `cargo test --release --locked --test rust_assets`. The asset test checks browser HTML/JavaScript and the archive's extension, final UUID/project URL, and compiled schema.
 - [ ] In `target/release`, run `sha256sum mcsr-toolkit > mcsr-toolkit.sha256` and `sha256sum --check mcsr-toolkit.sha256`. Record the binary SHA256, target triple, build environment, and commit in the release notes. Distribute that exact executable and its checksum together.
 - [ ] Check the executable's runtime library dependencies on the target with `ldd` and `readelf -d`; confirm no Python dependency and a supported target environment. Check the runtime process after live install for absence of Python.
@@ -15,7 +20,7 @@ The [Rust CI workflow](../.github/workflows/rust.yml) performs the clean-checkou
 
 ## Supervised live acceptance
 
-Obtain separate authorization for privileged installation and live keyboard/sensitivity operations before the first device action. Record the operator, target Ubuntu/GNOME/kernel, CPU, keyd and maccel versions, driver fingerprint, Minecraft version, UTC time, binary SHA256, original `options.txt` hashes, original keyd configuration, and exact maccel raw/CLI baseline. Preserve Python and Rust recovery records and user backups. Check that the Python service has stopped and any Python managed remap or unresolved recovery record is cleared before cutover.
+Obtain separate authorization for privileged installation and live keyboard/sensitivity operations before device actions. Record the operator, target Ubuntu/GNOME/kernel, CPU, keyd and maccel versions, driver fingerprint, Minecraft version, UTC time, binary SHA256, original `options.txt` hashes, original keyd configuration, and exact maccel raw/CLI baseline. Preserve Python and Rust recovery records and user backups. Confirm that no legacy Python service is active and resolve any Python-managed remap or unresolved recovery record before Rust service cutover; source removal does not imply legacy data has been cleared.
 
 ### 2026-10-26 Enter dual-role run
 
@@ -37,11 +42,11 @@ The reviewed app and helper matched SHA256 `28f234d99be62a27903043c3282eb248ba5a
 - [ ] Count uninstall authentication prompts. Existing verified policies or protected root history may require one combined status prompt; fixed-target root removal requires one more. More than two prompts is a failed acceptance result. On an abort, check that the old service, unit, policy, and helper are restored; on interrupted commit, retain the pending marker and reviewed helper for repair.
 - [ ] If root removal completed but the final response or marker removal failed, use `repair` only after verifying all fixed root targets, the user unit, enabled service, and extension are absent. It may reconcile the marker without the deleted helper; protected historical root data remains untouched. A partial root removal requires manual review before another attempt.
 
-If a case fails, stop the release, retain evidence and recovery tooling, fix the cause, rerun automated checks, and repeat the affected live case and cleanup checks. Do not remove Python source, tests, `pyproject.toml`, or manual setup guidance until this acceptance and parity gates pass.
+If a case fails, stop the release, retain evidence and recovery tooling, fix the cause, rerun automated checks, and repeat the affected live case and cleanup checks. The user chose to complete the source cutover before live logout/uninstall acceptance; keep those release gates open and preserve Python-era recovery data until its state has been verified.
 
 ## Release decision
 
 - [ ] Add a dated Rust acceptance result to [the Wayland record](../integration/acceptance-wayland.md), including failures, recovery, measurements, and remaining limits.
 - [ ] Finish release notes with changes, requirements, installation/repair/uninstall steps, known limits, commit, and verified checksum.
 - [x] First release tag convention selected: `v0.1.0`. No tag has been created.
-- [ ] Review the final staged diff and all checks. Obtain explicit approval for each commit, merge, tag, push, and publication before performing it. Keep `main` release-only and tag each release commit.
+- [ ] Review the final staged diff and all checks, including the exact artifact intended for publication. Obtain explicit approval for each commit, merge, tag, push, and publication before performing it. Keep `main` release-only and tag each release commit.

@@ -26,7 +26,7 @@ jobs:
       - name: Rust tests
         run: cargo test --locked
       - name: JavaScript harnesses
-        run: node tests/extension_harness.cjs && node tests/ui_harness.cjs
+        run: node tests/extension_harness.cjs && node tests/ui_harness.cjs && node integration/live-ui-acceptance.mjs self-test
       - name: Schema validation
         run: glib-compile-schemas --strict --dry-run extension/schemas
       - name: Release build and embedded assets
