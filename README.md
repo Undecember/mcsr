@@ -2,19 +2,18 @@
 
 A local setup and keybind configurator for Minecraft speedrunning on Ubuntu GNOME Wayland. Its browser UI edits a saved profile, previews physical → emitted → Minecraft key mappings, and applies or restores instance files. A GNOME Shell extension reports focused Minecraft windows and resize shortcuts. The installed service starts in observe-only mode; live keyd activation is opt-in.
 
-## Rust executable and release status
+## Rust executable and beta status
 
 The supported product is the Rust executable. It includes the local service, browser assets, GNOME Shell 50 extension archive, guided installer, and narrowly scoped privileged helper modes. It requires Ubuntu GNOME Shell 50 on x86_64 Wayland; keyd is needed for keyboard integration, and maccel is optional for eye sensitivity. The extension UUID is `mcsr-toolkit@undecember.github.io`.
 
-The Rust source cutover is complete. Supervised Rust desktop acceptance is still in progress: the live logout/login check, guided uninstall with rollback and prompt counts, and verification of the exact final published artifact remain release gates. The earlier Python live results in [the Wayland acceptance record](integration/acceptance-wayland.md) do not validate the Rust installer or service. See the [release checklist](docs/rust-release-checklist.md) and [draft release notes](docs/rust-release-notes.md).
+The Rust source cutover is complete. `v0.1.0-beta.1` is being prepared as a public beta; some supervised cases remain untested and are disclosed in the [release notes](docs/rust-release-notes.md). Rust live checks have passed for installation and repair, focus and remapping, recovery, and the Enter dual-role case. A live logout/login while remapped, lock/unlock and service crash/restart during active keyd remapping, and guided uninstall with rollback and authentication prompt counts have not been tested. Focus updates are asynchronous, so a brief interval can occur before a focus clear takes effect. Earlier Python live results in the [Wayland acceptance record](integration/acceptance-wayland.md) are historical evidence and do not validate the Rust installer or service. See the [release checklist](docs/rust-release-checklist.md) for the detailed results and deferred checks.
 
 ## Verify and install
 
 Download `mcsr-toolkit` and its matching `mcsr-toolkit.sha256` from the same reviewed release candidate. Verify the checksum beside the executable before running it:
 
 ```sh
-sha256sum --check mcsr-toolkit.sha256
-./mcsr-toolkit doctor
+sha256sum --check mcsr-toolkit.sha256 && chmod +x ./mcsr-toolkit && ./mcsr-toolkit doctor
 ```
 
 `doctor` reports prerequisites and unresolved recovery without changing keyboard configuration, sensitivity, or service state. Inspect its report before continuing. Install by running the verified executable:
@@ -90,7 +89,7 @@ Run the matching verified executable from its download location:
 
 Use `repair` for an interrupted install, a retained install marker, or a stopped/disabled identical installation. Do not remove the marker, helper, policy files, extension lineage manifest, or recovery evidence to bypass a refusal. If an uninstall is interrupted, preserve its marker and helper and use the reviewed repair workflow before retrying.
 
-Uninstall checks user and root recovery before removal and keeps the helper if keyd or maccel recovery is uncertain. Restore toolkit-managed state first and verify the original keyd configuration and maccel baseline. Historical keyd snapshots and maccel lock/generation records are safe to retain after successful Restore. Uninstall preserves user profiles, backups, and Python-era recovery data. It removes the service unit but does not remove user service drop-ins. Before uninstall, record and review the drop-in paths; after successful uninstall, manually remove only the reviewed toolkit live-mode drop-in and run `systemctl --user daemon-reload`. A leftover drop-in blocks a later Rust install/repair and may refer to the removed executable. Live uninstall, rollback, and authentication prompt counts are still pending supervised release acceptance; see the [checklist](docs/rust-release-checklist.md).
+Uninstall checks user and root recovery before removal and keeps the helper if keyd or maccel recovery is uncertain. Restore toolkit-managed state first and verify the original keyd configuration and maccel baseline. Historical keyd snapshots and maccel lock/generation records are safe to retain after successful Restore. Uninstall preserves user profiles, backups, and Python-era recovery data. It removes the service unit but does not remove user service drop-ins. Before uninstall, record and review the drop-in paths; after successful uninstall, manually remove only the reviewed toolkit live-mode drop-in and run `systemctl --user daemon-reload`. A leftover drop-in blocks a later Rust install/repair and may refer to the removed executable. Guided uninstall with rollback and authentication prompt counts has not yet been tested on the supervised Rust device; beta users should review the [checklist](docs/rust-release-checklist.md) before trying it and report issues through the [GitHub issue tracker](https://github.com/Undecember/mcsr/issues).
 
 ## Build and deterministic checks
 
