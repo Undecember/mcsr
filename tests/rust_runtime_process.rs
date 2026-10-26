@@ -6,10 +6,13 @@ use mcsr_toolkit::{
 use std::{
     fs,
     io::{BufRead, Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    },
     path::PathBuf,
-    process::{Command, Stdio},
-    sync::Arc,
+    process::{Child, Command, Stdio},
+    sync::{mpsc, Arc},
     time::{Duration, Instant},
 };
 
@@ -49,6 +52,35 @@ impl MaccelPeer for FakeMaccel {
             .write_all(b"restore\n")
             .map_err(|e| SensitivityError(e.to_string()))?;
         Ok("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into())
+    }
+}
+
+struct KillOnDrop(Child);
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn legacy_service_lock_child() {
+    let Some(path) = std::env::var_os("MCSR_RUNTIME_LEGACY_LOCK_CHILD") else {
+        return;
+    };
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    assert_eq!(unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) }, 0);
+    println!("LOCKED");
+    std::io::stdout().flush().unwrap();
+    loop {
+        std::thread::park();
     }
 }
 
@@ -172,15 +204,36 @@ fn active_python_style_service_lock_blocks_rust_start() {
     fs::create_dir(temp.path().join("run")).unwrap();
     fs::set_permissions(temp.path().join("run"), fs::Permissions::from_mode(0o700)).unwrap();
     let lock_path = temp.path().join("run/mcsr-toolkit-service.lock");
-    let mut child = Command::new("python3")
-        .args(["-u", "-c", "import fcntl,os,sys,time; f=os.open(sys.argv[1],os.O_RDWR|os.O_CREAT,0o600); fcntl.flock(f,fcntl.LOCK_EX); print('LOCKED',flush=True); time.sleep(30)"])
-        .arg(&lock_path)
-        .stdout(Stdio::piped()).spawn().unwrap();
-    let mut line = String::new();
-    std::io::BufReader::new(child.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-    assert!(line.contains("LOCKED"));
+    let mut child = KillOnDrop(
+        Command::new(std::env::current_exe().unwrap())
+            .env("PATH", "/nonexistent")
+            .args(["--exact", "legacy_service_lock_child", "--nocapture"])
+            .env("MCSR_RUNTIME_LEGACY_LOCK_CHILD", &lock_path)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let stdout = child.0.stdout.take().unwrap();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(stdout);
+        for _ in 0..5 {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 {
+                break;
+            }
+            if line.contains("LOCKED") {
+                let _ = ready_tx.send(true);
+                return;
+            }
+        }
+        let _ = ready_tx.send(false);
+    });
+    let locked = ready_rx
+        .recv_timeout(Duration::from_secs(3))
+        .unwrap_or(false);
+    assert!(locked, "legacy lock child did not acquire the lock");
+    reader.join().unwrap();
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -203,10 +256,7 @@ fn active_python_style_service_lock_blocks_rust_start() {
         Arc::new(FakeGnome),
         Arc::new(FakeMaccel(temp.path().join("maccel.log"))),
     ));
-    unsafe {
-        libc::kill(child.id() as i32, libc::SIGTERM);
-    }
-    child.wait().unwrap();
+    drop(child);
     assert!(matches!(outcome, Err(error) if error.to_string().contains("already running")));
     assert!(!temp.path().join("maccel.log").exists());
 }
