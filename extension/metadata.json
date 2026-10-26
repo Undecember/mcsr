@@ -1,0 +1,8 @@
+{
+  "name": "MCSR Toolkit",
+  "description": "Focused Minecraft window sizes and input context for MCSR Toolkit",
+  "uuid": "mcsr-toolkit@undecember.github.io",
+  "url": "https://github.com/Undecember/mcsr",
+  "settings-schema": "org.mcsr.toolkit",
+  "shell-version": ["50"]
+}

@@ -1,0 +1,14 @@
+{
+  "controls": {},
+  "crafting": {},
+  "snippets": [],
+  "ninjabrain": {},
+  "chat": {
+    "open_chat": "t",
+    "open_command": "slash",
+    "send": "enter",
+    "cancel": "esc"
+  },
+  "presets": [],
+  "launcher_root": null
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCSR Toolkit</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to configuration</a>
+  <header class="topbar"><div class="wrap"><span class="mark">M</span><span>MCSR Toolkit</span><span class="topnote">Local setup · Ubuntu Wayland</span></div></header>
+  <main id="main" class="wrap">
+    <div class="intro"><p class="eyebrow">CONFIGURE YOUR RUN</p><h1>Set up your tools and keys.</h1><p>Choose your bindings, inspect every instance, then apply when the preview is clear.</p></div>
+    <div id="notice" class="notice" role="status" aria-live="polite"></div>
+    <div id="cleanup-warning" class="notice" role="alert"></div>
+    <section class="panel" aria-labelledby="setup-title">
+      <div class="section-head"><div><p class="eyebrow">01 / SETUP</p><h2 id="setup-title">Launcher and downloads</h2></div><button type="button" id="refresh-status" class="quiet">Refresh status</button></div>
+      <div id="status" class="status-grid" aria-live="polite"></div>
+      <label for="launcher-root">MCSRLauncher root override <span class="hint">Leave blank for automatic discovery</span></label>
+      <input id="launcher-root" type="text" autocomplete="off" placeholder="/home/you/MCSRLauncher">
+      <div class="downloads"><div><strong>MCSRLauncher</strong><span>Official MCSR Ranked download</span><button type="button" data-download="launcher">Download JAR</button><div id="download-launcher-results" class="results" aria-live="polite"></div></div><div><strong>Ninjabrain Bot</strong><span>Official Ninjabrain1 release</span><button type="button" data-download="ninjabrain">Download JAR</button><div id="download-ninjabrain-results" class="results" aria-live="polite"></div></div></div>
+    </section>
+
+    <form id="profile-form" novalidate>
+      <section class="panel" aria-labelledby="keys-title"><div class="section-head"><div><p class="eyebrow">02 / BINDINGS</p><h2 id="keys-title">Controls and remaps</h2></div></div>
+        <p class="help">Control IDs match Minecraft <code>options.txt</code> entries, such as <code>key_key.back</code>. Use keyd key names such as <code>s</code>, <code>space</code>, or <code>leftshift</code>.</p>
+        <div class="edit-grid"><div class="editor"><h3>Minecraft controls</h3><p>Action ID → physical key</p><div id="controls-rows" class="rows"></div><button type="button" data-add="controls">+ Add control</button></div>
+        <div class="editor"><h3>Crafting search</h3><p>Physical key → emitted key</p><div id="crafting-rows" class="rows"></div><button type="button" data-add="crafting">+ Add remap</button></div>
+        <div class="editor"><h3>Ninjabrain Bot</h3><p>Physical key → existing shortcut</p><div id="ninjabrain-rows" class="rows"></div><button type="button" data-add="ninjabrain">+ Add shortcut</button></div>
+        <div class="editor"><h3>Typing goals</h3><p>Snippets are reminders, never text expansion.</p><label for="snippets">One goal per line</label><textarea id="snippets" rows="5" placeholder="KA&#10;BO"></textarea></div></div>
+      </section>
+      <section class="panel" aria-labelledby="chat-title"><div class="section-head"><div><p class="eyebrow">03 / CHAT</p><h2 id="chat-title">Chat keys</h2></div></div><p class="help">These keys enter or leave the pass-through chat layer. Keep them distinct from controls and remap sources.</p><div class="field-grid"><label>Open chat<input name="open_chat" required></label><label>Open command<input name="open_command" required></label><label>Send<input name="send" required></label><label>Cancel<input name="cancel" required></label></div></section>
+      <section class="panel" aria-labelledby="presets-title"><div class="section-head"><div><p class="eyebrow">04 / WINDOW</p><h2 id="presets-title">Resize presets</h2></div><button type="button" data-add="presets">+ Add preset</button></div><p class="help">Up to eight presets. One can use eye zoom sensitivity when maccel is available.</p><div id="presets-rows" class="preset-rows"></div></section>
+      <section class="panel" aria-labelledby="preview-title"><div class="section-head"><div><p class="eyebrow">05 / REVIEW</p><h2 id="preview-title">Preview and apply</h2></div></div><p class="help">Save the profile, then preview the exact physical → emitted → Minecraft action mapping for each instance. Changes to the form clear the preview.</p>
+        <div class="actions"><button type="button" id="save-profile">Save profile</button><button type="button" id="preview-profile">Preview changes</button><button type="button" id="apply-profile" class="primary" disabled>Apply profile</button></div>
+        <div id="preview-results" class="results" aria-live="polite"></div><div id="apply-results" class="results" aria-live="polite"></div>
+      </section>
+    </form>
+    <section class="panel" aria-labelledby="restore-title"><div class="section-head"><div><p class="eyebrow">06 / RECOVERY</p><h2 id="restore-title">Restore a backup</h2></div></div><p class="help">A successful Apply can return a backup ID. Restore returns toolkit-managed files to that saved state.</p><label for="backup-id">Backup ID</label><div class="restore-line"><input id="backup-id" autocomplete="off"><button type="button" id="restore-backup">Restore backup</button></div><div id="restore-results" class="results" aria-live="polite"></div></section>
+  </main>
+</body>
+</html>

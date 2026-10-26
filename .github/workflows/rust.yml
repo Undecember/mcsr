@@ -1,0 +1,43 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build prerequisites
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin pkg-config libdbus-1-dev
+      - name: Tool versions
+        run: rustc --version && cargo --version && node --version && glib-compile-schemas --version
+      - name: Formatting
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Rust tests
+        run: cargo test --locked
+      - name: JavaScript harnesses
+        run: node tests/extension_harness.cjs && node tests/ui_harness.cjs && node integration/live-ui-acceptance.mjs self-test
+      - name: Schema validation
+        run: glib-compile-schemas --strict --dry-run extension/schemas
+      - name: Release build and embedded assets
+        run: cargo build --release --locked && cargo test --release --locked --test rust_assets
+      - name: Checksum
+        run: cd target/release && sha256sum mcsr-toolkit > mcsr-toolkit.sha256 && sha256sum --check mcsr-toolkit.sha256
+      - name: Retain candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcsr-toolkit-linux-x86_64-candidate
+          path: |
+            target/release/mcsr-toolkit
+            target/release/mcsr-toolkit.sha256
+          if-no-files-found: error

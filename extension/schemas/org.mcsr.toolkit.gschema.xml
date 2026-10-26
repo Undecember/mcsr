@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.mcsr.toolkit" path="/org/mcsr/toolkit/">
+    <key name="preset-1" type="as"><default>[]</default></key>
+    <key name="preset-2" type="as"><default>[]</default></key>
+    <key name="preset-3" type="as"><default>[]</default></key>
+    <key name="preset-4" type="as"><default>[]</default></key>
+    <key name="preset-5" type="as"><default>[]</default></key>
+    <key name="preset-6" type="as"><default>[]</default></key>
+    <key name="preset-7" type="as"><default>[]</default></key>
+    <key name="preset-8" type="as"><default>[]</default></key>
+    <key name="eye-zoom-shift" type="as"><default>[]</default></key>
+  </schema>
+</schemalist>

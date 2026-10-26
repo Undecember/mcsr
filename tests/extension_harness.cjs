@@ -1,0 +1,233 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const source = fs.readFileSync('extension/extension.js', 'utf8')
+    .replace(/^import .*;$/gm, '')
+    .replace('export default class McsrToolkitExtension', 'globalThis.Toolkit = class McsrToolkitExtension');
+let modal = 0;
+let focused = null;
+let rect = {x: 10, y: 20, width: 854, height: 517};
+let requested = null;
+const callbacks = new Map();
+const bindings = new Map();
+const settings = new Map();
+const emitted = [];
+let grabFailure = null;
+let addFailure = null;
+let setFailure = null;
+const GLib = {PRIORITY_DEFAULT: 0, SOURCE_CONTINUE: true, SOURCE_REMOVE: false,
+    timeout_add: (_p, _ms, fn) => { callbacks.set(callbacks.size + 1, fn); return callbacks.size; },
+    source_remove: id => callbacks.delete(id), Variant: class {constructor(type, value) {
+        this.type = type; this.value = value;
+    }}};
+const context = {GLib, Gio: {}, TextEncoder, Meta: {KeyBindingFlags: {NONE: 0}, KeyBindingAction: {NONE: 0}},
+    Shell: {ActionMode: {NORMAL: 1}}, Extension: class {},
+    Main: {get modalCount() {return modal;}, wm: {
+        addKeybinding: (name, _s, _f, _m, fn) => {
+            if (addFailure === name) {addFailure = null; throw Error('mid-add failure');}
+            if (grabFailure === name) {grabFailure = null; return 0;}
+            bindings.set(name, fn); return 42;
+        },
+        removeKeybinding: name => bindings.delete(name)}},
+    global: {display: {get focus_window() {
+        if (focused) focused.get_title ??= () => '';
+        return focused;
+    }}}, log: () => {}};
+vm.createContext(context);
+vm.runInContext(source, context);
+const extension = new context.Toolkit();
+extension._settings = {
+    get_strv: name => settings.get(name) ?? [],
+    set_strv: (name, value) => {
+        if (setFailure === name) {setFailure = null; throw Error('settings failure');}
+        settings.set(name, value); return true;
+    }};
+extension._bindings = [];
+extension._presets = [];
+extension._resizeRequests = new Map();
+extension._dbus = {emit_signal: (name, value) => emitted.push([name, value.type, value.value])};
+extension.ConfigurePresets(JSON.stringify([
+    {id: 'normal', accelerator: 'F6', eye_zoom: false},
+    {id: 'eye', accelerator: 'F7', eye_zoom: true},
+]));
+assert.deepEqual(Array.from(settings.get('eye-zoom-shift')), ['<Shift>F7']);
+assert.equal(bindings.size, 0, 'no global grabs while Minecraft is unfocused');
+focused = {get_wm_class: () => 'Minecraft 1.16.1', get_frame_rect: () => rect,
+    move_resize_frame: (_u, x, y, width, height) => {requested = {x, y, width, height};}};
+extension._sendFocus();
+bindings.get('preset-2')();
+assert.equal(emitted[0][0], 'PresetActivated');
+assert.equal(emitted[0][1], '(sb)');
+assert.deepEqual(Array.from(emitted[0][2]), ['eye', false]);
+bindings.get('eye-zoom-shift')();
+assert.deepEqual(Array.from(emitted[1][2]), ['eye', true]);
+const staleBinding = bindings.get('preset-1');
+modal = 1;
+extension._sendFocus();
+assert.equal(bindings.size, 0, 'modal must release grabs');
+staleBinding();
+assert.equal(emitted.length, 2);
+modal = 0;
+extension._sendFocus();
+assert.equal(bindings.size, 3);
+let returned = null;
+let error = null;
+const invocation = {return_value: value => {returned = value.value;},
+    return_dbus_error: (_name, message) => {error = message;}};
+extension.ResizeFocusedAsync([800, 600], invocation);
+assert.equal(returned, null, 'must wait for the observed resize');
+assert.deepEqual(requested, {x: 10, y: 20, width: 800, height: 600});
+rect = requested;
+for (const callback of callbacks.values()) callback();
+assert.deepEqual(Array.from(returned), [800, 600]);
+returned = null;
+focused = {get_wm_class: () => 'org.gnome.Terminal'};
+extension._sendFocus();
+assert.equal(bindings.size, 0, 'blur must release grabs');
+extension.ResizeFocusedAsync([800, 600], invocation);
+assert.match(error, /focused Minecraft/);
+assert.equal(returned, null);
+console.log('extension behavior checks passed');
+// The service owns FIFO creation; a missing path must only schedule a retry.
+let opened = false;
+extension._cancel = {is_cancelled: () => false};
+extension._fifo = {query_info: () => {throw Error('missing');},
+    open_readwrite_async: () => {opened = true;}};
+context.Gio.FileQueryInfoFlags = {NOFOLLOW_SYMLINKS: 1};
+extension._openFifo();
+assert.equal(opened, false);
+assert.ok(extension._retry);
+// A regular file is refused without opening it.
+extension._fifo.query_info = () => ({get_attribute_uint32: () => 0o100600});
+extension._retry = null;
+extension._openFifo();
+assert.equal(opened, false);
+// Reconfiguration drops stale bindings and an invalid replacement leaves valid ones intact.
+extension.ConfigurePresets('[{"id":"only","accelerator":"F8","eye_zoom":false}]');
+assert.equal(bindings.size, 0);
+assert.throws(() => extension.ConfigurePresets('[{"id":"bad","accelerator":"F8","eye_zoom":true},{"id":"bad","accelerator":"F9","eye_zoom":false}]'));
+assert.equal(bindings.size, 0);
+// Limits are checked before Mutter is touched, and loss of focus cancels pending observation.
+focused = {get_wm_class: () => 'Minecraft', get_frame_rect: () => rect,
+    move_resize_frame: (_u, x, y, width, height) => {requested = {x, y, width, height};}};
+error = null;
+extension.ResizeFocusedAsync([99, 600], invocation);
+assert.match(error, /invalid Minecraft window size/);
+error = null;
+callbacks.clear();
+extension.ResizeFocusedAsync([900, 700], invocation);
+focused = null;
+for (const callback of callbacks.values()) callback();
+assert.match(error, /focus lost/);
+assert.equal(extension._resizeRequests.size, 0);
+
+focused = {get_wm_class: () => 'Minecraft'};
+extension._sendFocus();
+// GNOME reports failed grabs as NONE; retain the prior working shortcut on failure.
+const replacement = '[{"id":"new","accelerator":"F10","eye_zoom":false},{"id":"next","accelerator":"F11","eye_zoom":false}]';
+for (const failure of ['grab', 'add', 'settings']) {
+    if (failure === 'grab') grabFailure = 'preset-2';
+    if (failure === 'add') addFailure = 'preset-2';
+    if (failure === 'settings') setFailure = 'preset-2';
+    assert.throws(() => extension.ConfigurePresets(replacement), /grab|mid-add|settings/);
+    assert.deepEqual(Array.from(bindings.keys()), ['preset-1']);
+    assert.deepEqual(Array.from(settings.get('preset-1')), ['F8']);
+    assert.deepEqual(Array.from(settings.get('preset-2')), []);
+    focused = {get_wm_class: () => 'Minecraft'};
+    bindings.get('preset-1')();
+    assert.deepEqual(Array.from(emitted.at(-1)[2]), ['only', false]);
+}
+// A path may turn into a regular file during async open. Verify the opened stream.
+context.Gio.Credentials = class {get_unix_user() {return 1000;}};
+const fileInfo = (mode, uid = 1000, inode = '123') => ({
+    has_attribute: () => true,
+    get_attribute_uint32: name => name === 'unix::mode' ? mode : uid,
+    get_attribute_as_string: name => name === 'unix::inode' ? inode : '46',
+});
+for (const [mode, uid, pathnameMode, inode] of [
+    [0o100600, 1000, 0o010600, '123'], [0o010666, 1000, 0o010600, '123'],
+    [0o010600, 1001, 0o010600, '123'], [0o010600, 1000, 0o120777, '123'],
+    [0o010600, 1000, 0o010600, '456'],
+]) {
+    let closed = false;
+    const channel = {query_info: () => fileInfo(mode, uid, inode), close: () => {closed = true;},
+        get_output_stream: () => {throw Error('must refuse before output');}};
+    let queryCount = 0;
+    extension._fifo = {query_info: () => fileInfo(queryCount++ ? pathnameMode : 0o010600),
+        open_readwrite_async: (_p, _c, cb) => cb(extension._fifo, {}),
+        open_readwrite_finish: () => channel};
+    extension._retry = null;
+    extension._opening = false;
+    extension._channel = null;
+    extension._openFifo();
+    assert.equal(closed, true, 'unsafe opened stream must be closed');
+    assert.equal(extension._channel, null);
+    assert.ok(extension._retry);
+}
+// A stable private FIFO is accepted after descriptor and nofollow pathname checks.
+const safeInfo = fileInfo(0o010600);
+const safeOutput = {};
+let initialFocusSent = false;
+extension._sendFocus = () => {initialFocusSent = true;};
+extension._fifo = {query_info: () => safeInfo,
+    open_readwrite_async: (_p, _c, cb) => cb(extension._fifo, {}),
+    open_readwrite_finish: () => ({query_info: () => safeInfo,
+        get_output_stream: () => safeOutput, close: () => {}})};
+extension._retry = null;
+extension._openFifo();
+assert.equal(extension._pipe, safeOutput);
+assert.equal(initialFocusSent, true);
+// Async FIFO writes use refcounted GBytes and complete partial writes before a new event.
+context.GLib.Bytes = class {constructor(data) {this.data = data;}};
+const writes = [];
+let pendingWrite = null;
+let finishCount = 0;
+extension._pipe = {
+    write_bytes_async: (bytes, _priority, _cancel, callback) => {
+        writes.push(bytes);
+        pendingWrite = callback;
+    },
+    write_bytes_finish: () => finishCount,
+};
+extension._channel = {close: () => {}};
+extension._writing = false;
+extension._pendingEvent = null;
+extension._sendEvent('Minecraft', 'Game', false);
+assert.ok(extension._writingBytes instanceof context.GLib.Bytes);
+assert.equal(extension._writingBytes, writes[0]);
+assert.ok(pendingWrite);
+finishCount = 10;
+pendingWrite(extension._pipe, {});
+assert.equal(writes.length, 2);
+assert.equal(new TextDecoder().decode(writes[1].data),
+    new TextDecoder().decode(writes[0].data).slice(10));
+finishCount = writes[1].data.length;
+pendingWrite(extension._pipe, {});
+assert.equal(extension._writingBytes, null);
+// Letter shortcuts are physically ungrabbed outside game focus, and focus-time
+// installation failure removes every partial grab before the next retry.
+focused = null;
+extension._presets = [];
+extension.ConfigurePresets('[{"id":"letter","accelerator":"s","eye_zoom":false},{"id":"next","accelerator":"F11","eye_zoom":false}]');
+assert.equal(bindings.size, 0);
+focused = {get_wm_class: () => 'Minecraft'};
+grabFailure = 'preset-2';
+extension._syncPresetBindings();
+assert.equal(bindings.size, 0);
+extension._syncPresetBindings();
+assert.deepEqual(Array.from(bindings.keys()), ['preset-1', 'preset-2']);
+// Extension loss releases the Mutter grabs even when focus remains Minecraft.
+const disabling = new context.Toolkit();
+let canceled = false;
+let unexported = false;
+disabling._sendEvent = () => {};
+disabling._bindings = Array.from(bindings.keys());
+disabling._resizeRequests = new Map();
+disabling._cancel = {cancel: () => {canceled = true;}};
+disabling._dbus = {unexport: () => {unexported = true;}};
+context.global.display.disconnect = () => {};
+context.Main.layoutManager = {disconnectObject: () => {}};
+disabling.disable();
+assert.equal(bindings.size, 0);
+assert.equal(canceled, true);
+assert.equal(unexported, true);
