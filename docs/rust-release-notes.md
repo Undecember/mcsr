@@ -48,7 +48,7 @@ Earlier supervised Rust checks passed for installation and repair, browser Save/
 
 ## Candidate verification and artifact identity
 
-This is a locally prepared prerelease candidate, not a published release. Automated verification results and remaining publication steps are recorded in the [release checklist](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.2/docs/rust-release-checklist.md#v010-beta2-candidate--2026-10-29).
+The release artifacts were built and verified locally. Automated verification results and the publication checklist are recorded in the [release checklist](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.2/docs/rust-release-checklist.md#v010-beta2-candidate--2026-10-29).
 
 The executable's binary source base is commit `8b81d6f7a681492e2dcb88eaf625abc84f4119ce`. The release tag commit may be newer because it includes release documentation. Application source, embedded assets, and `Cargo.lock` match that source base; local agent configuration and generated Graphify files are outside the binary inputs.
 
