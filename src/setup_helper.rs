@@ -64,6 +64,245 @@ fn policy_targets(login: &str) -> [Target; 2] {
         },
     ]
 }
+const KEYD_SERVICE_STATE: &str = "/var/lib/mcsr-toolkit/keyd-service.json";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ServiceState {
+    active: bool,
+}
+
+fn managed_keyd_targets(boundary: &Path, state: &[u8]) -> Vec<Target> {
+    [
+        (
+            crate::managed_keyd::BINARY_PATH,
+            crate::managed_keyd::binary(),
+            0o755,
+        ),
+        (
+            crate::managed_keyd::DROPIN_PATH,
+            crate::managed_keyd::DROPIN.as_bytes(),
+            0o644,
+        ),
+        (KEYD_SERVICE_STATE, state, 0o600),
+    ]
+    .into_iter()
+    .map(|(path, bytes, mode)| Target {
+        path: boundary.join(path.trim_start_matches('/')),
+        bytes: bytes.to_vec(),
+        mode,
+        policy: false,
+    })
+    .collect()
+}
+
+fn read_service_state(path: &Path, boundary: &Path, uid: u32) -> Result<Option<bool>, String> {
+    check_components(path, boundary, uid)?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    if !metadata.is_file()
+        || metadata.uid() != uid
+        || metadata.permissions().mode() & 0o7777 != 0o600
+        || metadata.len() > 128
+    {
+        return Err("unsafe managed keyd service-state record".into());
+    }
+    let state: ServiceState = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|_| "invalid managed keyd service-state record")?;
+    Ok(Some(state.active))
+}
+
+fn original_service_state(boundary: &Path, uid: u32) -> Result<Option<bool>, String> {
+    let path = boundary.join(KEYD_SERVICE_STATE.trim_start_matches('/'));
+    let stage = path.with_file_name(".keyd-service.json-mcsr-uninstall-stage");
+    let state = match read_service_state(&path, boundary, uid)? {
+        Some(active) => Some(active),
+        None => read_service_state(&stage, boundary, uid)?,
+    };
+    if state.is_none() {
+        for managed in [
+            crate::managed_keyd::BINARY_PATH,
+            crate::managed_keyd::DROPIN_PATH,
+        ] {
+            match fs::symlink_metadata(boundary.join(managed.trim_start_matches('/'))) {
+                Ok(_) => return Err(
+                    "managed keyd files lack their service-state record; manual recovery required"
+                        .into(),
+                ),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+    }
+    Ok(state)
+}
+
+fn ensure_parent(path: &Path, boundary: &Path, uid: u32) -> Result<(), String> {
+    let parent = path.parent().ok_or("missing setup parent")?;
+    let mut ancestors: Vec<_> = parent
+        .ancestors()
+        .take_while(|p| p.starts_with(boundary))
+        .collect();
+    ancestors.reverse();
+    for directory in ancestors {
+        check_components(directory, boundary, uid)?;
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err("setup parent is not a directory".into()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir(directory).map_err(|e| e.to_string())?;
+                fs::set_permissions(directory, fs::Permissions::from_mode(0o755))
+                    .map_err(|e| e.to_string())?;
+                sync_target_parent(directory)?;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(())
+}
+
+trait KeydService {
+    fn lock_transition(&mut self) -> Result<Option<File>, String> {
+        Ok(None)
+    }
+    fn action(&mut self, action: &str) -> Result<(), String>;
+    fn verify_managed(&mut self) -> Result<(), String>;
+}
+trait Lifecycle {
+    fn before_remove(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn after_publish(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn after_restore(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+#[cfg(test)]
+struct NoLifecycle;
+#[cfg(test)]
+impl Lifecycle for NoLifecycle {}
+struct ManagedLifecycle<'a> {
+    service: &'a mut dyn KeydService,
+    prior_active: bool,
+    original_active: bool,
+    uninstall: bool,
+}
+impl Lifecycle for ManagedLifecycle<'_> {
+    fn before_remove(&mut self) -> Result<(), String> {
+        self.service.action("stop")
+    }
+    fn after_publish(&mut self) -> Result<(), String> {
+        let _guard = self.service.lock_transition()?;
+        self.service.action("daemon-reload")?;
+        if self.uninstall {
+            self.service.action(if self.original_active {
+                "restart"
+            } else {
+                "stop"
+            })
+        } else {
+            self.service.action("restart")?;
+            self.service.verify_managed()
+        }
+    }
+    fn after_restore(&mut self) -> Result<(), String> {
+        let _guard = self.service.lock_transition()?;
+        self.service.action("daemon-reload")?;
+        self.service
+            .action(if self.prior_active { "restart" } else { "stop" })?;
+        if self.uninstall && self.prior_active {
+            self.service.verify_managed()?;
+        }
+        Ok(())
+    }
+}
+
+struct RealKeydService {
+    lock_transitions: bool,
+}
+impl RealKeydService {
+    fn show(property: &str) -> Result<String, String> {
+        crate::keyd::run_command(
+            &[
+                "/usr/bin/systemctl".into(),
+                "show".into(),
+                "keyd.service".into(),
+                format!("--property={property}"),
+                "--value".into(),
+            ],
+            &[],
+            std::time::Duration::from_secs(5),
+        )
+        .map(|r| r.stdout.trim().to_string())
+        .map_err(|e| e.to_string())
+    }
+    fn active() -> Result<bool, String> {
+        if Self::show("LoadState")? != "loaded" {
+            return Err(
+                "an unmasked installed keyd.service is required before toolkit setup".into(),
+            );
+        }
+        match Self::show("ActiveState")?.as_str() {
+            "active" => Ok(true),
+            "inactive" | "failed" => Ok(false),
+            _ => Err("keyd.service is transitioning or unavailable".into()),
+        }
+    }
+}
+impl KeydService for RealKeydService {
+    fn lock_transition(&mut self) -> Result<Option<File>, String> {
+        if self.lock_transitions {
+            crate::keyd_helper::HelperFilesystem::production()
+                .lock_operation()
+                .map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+    fn action(&mut self, action: &str) -> Result<(), String> {
+        let args: Vec<String> = if action == "daemon-reload" {
+            vec!["/usr/bin/systemctl".into(), action.into()]
+        } else if ["restart", "stop"].contains(&action) {
+            vec![
+                "/usr/bin/systemctl".into(),
+                action.into(),
+                "keyd.service".into(),
+            ]
+        } else {
+            return Err("invalid keyd service action".into());
+        };
+        crate::keyd::run_command(&args, &[], std::time::Duration::from_secs(10))
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    fn verify_managed(&mut self) -> Result<(), String> {
+        if !Self::active()? {
+            return Err("managed keyd daemon is not active".into());
+        }
+        let pid = Self::show("MainPID")?
+            .parse::<u32>()
+            .map_err(|_| "invalid keyd daemon PID")?;
+        if pid == 0 {
+            return Err("managed keyd daemon PID missing".into());
+        }
+        let running = fs::metadata(format!("/proc/{pid}/exe")).map_err(|e| e.to_string())?;
+        let installed =
+            fs::symlink_metadata(crate::managed_keyd::BINARY_PATH).map_err(|e| e.to_string())?;
+        if running.dev() != installed.dev() || running.ino() != installed.ino() {
+            return Err(
+                "keyd.service did not start the toolkit-managed daemon; review service overrides"
+                    .into(),
+            );
+        }
+        crate::keyd::verify_managed_daemon(crate::managed_keyd::BINARY_PATH)
+    }
+}
+
 fn policy_state(targets: &[Target], boundary: &Path, uid: u32) -> &'static str {
     let mut all = true;
     for target in targets {
@@ -199,6 +438,7 @@ fn rollback(created: &[Target], uid: u32) -> Result<(), String> {
     }
 }
 
+#[cfg(test)]
 fn transaction(
     targets: &[Target],
     boundary: &Path,
@@ -207,6 +447,26 @@ fn transaction(
     writer: &mut impl Write,
     validate_policy: impl Fn(&Path) -> Result<(), String>,
 ) -> Result<(), String> {
+    transaction_with_lifecycle(
+        targets,
+        boundary,
+        uid,
+        reader,
+        writer,
+        validate_policy,
+        &mut NoLifecycle,
+    )
+}
+
+fn transaction_with_lifecycle(
+    targets: &[Target],
+    boundary: &Path,
+    uid: u32,
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    validate_policy: impl Fn(&Path) -> Result<(), String>,
+    lifecycle: &mut dyn Lifecycle,
+) -> Result<(), String> {
     // Validate all existing destinations before publishing anything.
     let mut missing = Vec::new();
     for target in targets {
@@ -214,6 +474,9 @@ fn transaction(
         if !matches(target, uid)? {
             missing.push(target);
         }
+    }
+    for target in &missing {
+        ensure_parent(&target.path, boundary, uid)?;
     }
     let mut staged = Vec::new();
     for target in &missing {
@@ -251,6 +514,7 @@ fn transaction(
                 .and_then(|directory| directory.sync_all())
                 .map_err(|e| e.to_string())?;
         }
+        lifecycle.after_publish()?;
         writer.write_all(b"READY\n").map_err(|e| e.to_string())?;
         writer.flush().map_err(|e| e.to_string())?;
         if Decision::read(reader)? == Decision::Abort {
@@ -263,7 +527,16 @@ fn transaction(
         Ok(())
     })();
     if let Err(error) = result {
-        return match rollback(&created, uid) {
+        // Keep the recorded original service state until restoration is verified.
+        // A failed restart must leave enough information for manual recovery.
+        let (records, files): (Vec<_>, Vec<_>) = created
+            .iter()
+            .cloned()
+            .partition(|target| target.path.ends_with("keyd-service.json"));
+        return match rollback(&files, uid)
+            .and_then(|_| lifecycle.after_restore())
+            .and_then(|_| rollback(&records, uid))
+        {
             Ok(()) => {
                 let _ = writer.write_all(b"ABORTED\n");
                 let _ = writer.flush();
@@ -310,13 +583,34 @@ fn restore_uninstall_stages(targets: &[Target], boundary: &Path, uid: u32) -> Re
     }
     Ok(())
 }
+#[cfg(test)]
 fn remove_transaction(
     targets: &[Target],
     boundary: &Path,
     uid: u32,
     reader: &mut impl Read,
     writer: &mut impl Write,
+    recheck_recovery: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    remove_transaction_with_lifecycle(
+        targets,
+        boundary,
+        uid,
+        reader,
+        writer,
+        recheck_recovery,
+        &mut NoLifecycle,
+    )
+}
+
+fn remove_transaction_with_lifecycle(
+    targets: &[Target],
+    boundary: &Path,
+    uid: u32,
+    reader: &mut impl Read,
+    writer: &mut impl Write,
     mut recheck_recovery: impl FnMut() -> Result<(), String>,
+    lifecycle: &mut dyn Lifecycle,
 ) -> Result<(), String> {
     let (helper, others) = targets.split_last().ok_or("missing uninstall helper")?;
     if !matches(helper, uid)? {
@@ -327,6 +621,7 @@ fn remove_transaction(
     let mut staged = Vec::new();
     let mut deleting = false;
     let result = (|| {
+        lifecycle.before_remove()?;
         for target in others {
             check_components(&target.path, boundary, uid)?;
             let stage = uninstall_stage(target)?;
@@ -340,6 +635,7 @@ fn remove_transaction(
                 sync_target_parent(&target.path)?;
             }
         }
+        lifecycle.after_publish()?;
         writer.write_all(b"READY\n").map_err(|e| e.to_string())?;
         writer.flush().map_err(|e| e.to_string())?;
         if Decision::read(reader)? == Decision::Abort {
@@ -377,7 +673,9 @@ fn remove_transaction(
                 .iter()
                 .all(|target| uninstall_stage(target).is_ok_and(|path| path.exists()))
         {
-            return match restore_uninstall_stages(&staged, boundary, uid) {
+            return match restore_uninstall_stages(&staged, boundary, uid)
+                .and_then(|_| lifecycle.after_restore())
+            {
                 Ok(()) => {
                     let _ = writer.write_all(b"ABORTED\n");
                     let _ = writer.flush();
@@ -441,7 +739,7 @@ pub fn run_stdio() -> Result<(), String> {
         return Err("invalid installed helper size".into());
     }
     let policies = policy_targets(&login);
-    let targets = [
+    let mut targets = vec![
         Target {
             path: SERVICE_PATH.into(),
             bytes,
@@ -451,10 +749,26 @@ pub fn run_stdio() -> Result<(), String> {
         policies[0].clone(),
         policies[1].clone(),
     ];
+    let prior_active = RealKeydService::active()?;
+    let original_active = original_service_state(Path::new("/"), 0)?;
+    let state = format!(
+        "{{\"active\":{}}}\n",
+        original_active.unwrap_or(prior_active)
+    );
+    targets.extend(managed_keyd_targets(Path::new("/"), state.as_bytes()));
+    let mut service = RealKeydService {
+        lock_transitions: true,
+    };
+    let mut lifecycle = ManagedLifecycle {
+        service: &mut service,
+        prior_active,
+        original_active: original_active.unwrap_or(prior_active),
+        uninstall: false,
+    };
     restore_uninstall_stages(&targets, Path::new("/"), 0)?;
     let mut input = io::stdin();
     let mut output = io::stdout();
-    transaction(
+    transaction_with_lifecycle(
         &targets,
         Path::new("/"),
         0,
@@ -477,6 +791,7 @@ pub fn run_stdio() -> Result<(), String> {
                 ))
             }
         },
+        &mut lifecycle,
     )
 }
 
@@ -496,8 +811,13 @@ pub fn uninstall_stdio() -> Result<(), String> {
     if bytes.is_empty() || bytes.len() > 100_000_000 {
         return Err("invalid installed helper size".into());
     }
+    let prior_active = RealKeydService::active()?;
+    let original_active = original_service_state(Path::new("/"), 0)?
+        .ok_or("managed keyd service-state record missing; repair before uninstall")?;
+    let state = format!("{{\"active\":{original_active}}}\n");
     let policies = policy_targets(&login);
-    let targets = [
+    let mut targets = managed_keyd_targets(Path::new("/"), state.as_bytes());
+    targets.extend([
         policies[0].clone(),
         policies[1].clone(),
         Target {
@@ -512,7 +832,16 @@ pub fn uninstall_stdio() -> Result<(), String> {
             mode: 0o755,
             policy: false,
         },
-    ];
+    ]);
+    let mut service = RealKeydService {
+        lock_transitions: false,
+    };
+    let mut lifecycle = ManagedLifecycle {
+        service: &mut service,
+        prior_active,
+        original_active,
+        uninstall: true,
+    };
     let keyd_paths = crate::keyd_helper::HelperFilesystem::production();
     let maccel_paths = crate::maccel_helper::HelperPaths::production();
     // Fixed order: keyd first, then maccel. Keep both locks until all root targets commit or restore.
@@ -520,7 +849,7 @@ pub fn uninstall_stdio() -> Result<(), String> {
     let _maccel_lock = crate::maccel_helper::hold_operation_lock(&maccel_paths)?;
     let mut input = io::stdin();
     let mut output = io::stdout();
-    remove_transaction(
+    remove_transaction_with_lifecycle(
         &targets,
         Path::new("/"),
         0,
@@ -538,6 +867,7 @@ pub fn uninstall_stdio() -> Result<(), String> {
                 Err("input recovery pending; retain helper and policy".into())
             }
         },
+        &mut lifecycle,
     )
 }
 
@@ -545,6 +875,7 @@ pub fn recovery_status() -> Result<String, String> {
     if unsafe { libc::geteuid() } != 0 {
         return Err("status requires root".into());
     }
+    original_service_state(Path::new("/"), 0)?;
     check_components(Path::new(HELPER_PATH), Path::new("/"), 0)?;
     let keyd = match fs::symlink_metadata("/var/lib/mcsr-toolkit/keyd") {
         Err(e) if e.kind() == io::ErrorKind::NotFound => "clear".to_owned(),
@@ -954,5 +1285,229 @@ mod tests {
         for target in &targets {
             assert!(!target.path.exists());
         }
+    }
+    #[derive(Default)]
+    struct RecordingKeyd {
+        events: Vec<String>,
+        fail_restart: bool,
+    }
+    impl KeydService for RecordingKeyd {
+        fn action(&mut self, action: &str) -> Result<(), String> {
+            self.events.push(action.into());
+            if action == "restart" && self.fail_restart {
+                return Err("restart failed".into());
+            }
+            Ok(())
+        }
+        fn verify_managed(&mut self) -> Result<(), String> {
+            self.events.push("verify-managed".into());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn managed_keyd_targets_refuse_foreign_override_before_publishing_binary() {
+        let (root, _, uid) = fixture();
+        let targets = managed_keyd_targets(root.path(), b"{\"active\":false}\n");
+        for target in &targets {
+            ensure_parent(&target.path, root.path(), uid).unwrap();
+        }
+        let override_target = targets
+            .iter()
+            .find(|t| t.path.ends_with("90-mcsr-toolkit.conf"))
+            .unwrap();
+        fs::write(&override_target.path, b"foreign service override").unwrap();
+        fs::set_permissions(&override_target.path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(transaction(
+            &targets,
+            root.path(),
+            uid,
+            &mut Cursor::new(b"COMMIT\n"),
+            &mut Vec::new(),
+            |_| Ok(())
+        )
+        .is_err());
+        assert!(!targets[0].path.exists());
+        assert_eq!(
+            fs::read(&override_target.path).unwrap(),
+            b"foreign service override"
+        );
+    }
+
+    #[test]
+    fn managed_service_install_starts_daemon_but_rollback_restores_inactive_state() {
+        let mut service = RecordingKeyd::default();
+        {
+            let mut lifecycle = ManagedLifecycle {
+                service: &mut service,
+                prior_active: false,
+                original_active: false,
+                uninstall: false,
+            };
+            lifecycle.after_publish().unwrap();
+            lifecycle.after_restore().unwrap();
+        }
+        assert_eq!(
+            service.events,
+            [
+                "daemon-reload",
+                "restart",
+                "verify-managed",
+                "daemon-reload",
+                "stop"
+            ]
+        );
+    }
+
+    #[test]
+    fn managed_service_uninstall_restores_original_active_state_without_enable_mutations() {
+        for originally_active in [false, true] {
+            let mut service = RecordingKeyd::default();
+            {
+                let mut lifecycle = ManagedLifecycle {
+                    service: &mut service,
+                    prior_active: true,
+                    original_active: originally_active,
+                    uninstall: true,
+                };
+                lifecycle.before_remove().unwrap();
+                lifecycle.after_publish().unwrap();
+                lifecycle.after_restore().unwrap();
+            }
+            assert_eq!(
+                service.events,
+                [
+                    "stop",
+                    "daemon-reload",
+                    if originally_active { "restart" } else { "stop" },
+                    "daemon-reload",
+                    "restart",
+                    "verify-managed"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn managed_state_record_rejects_unknown_fields_and_unsafe_mode() {
+        let (root, _, uid) = fixture();
+        let state = root.path().join("state.json");
+        fs::write(&state, b"{\"active\":true,\"other\":true}").unwrap();
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(read_service_state(&state, root.path(), uid).is_err());
+        fs::write(&state, b"{\"active\":false}\n").unwrap();
+        assert!(!read_service_state(&state, root.path(), uid)
+            .unwrap()
+            .unwrap());
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(read_service_state(&state, root.path(), uid).is_err());
+    }
+
+    #[test]
+    fn managed_restart_failure_rolls_back_all_new_targets_and_restores_service() {
+        let (root, _, uid) = fixture();
+        let targets = managed_keyd_targets(root.path(), b"{\"active\":false}\n");
+        let mut service = RecordingKeyd {
+            fail_restart: true,
+            ..Default::default()
+        };
+        let mut lifecycle = ManagedLifecycle {
+            service: &mut service,
+            prior_active: false,
+            original_active: false,
+            uninstall: false,
+        };
+        let mut output = Vec::new();
+        assert!(transaction_with_lifecycle(
+            &targets,
+            root.path(),
+            uid,
+            &mut Cursor::new(b"COMMIT\n"),
+            &mut output,
+            |_| Ok(()),
+            &mut lifecycle
+        )
+        .is_err());
+        assert_eq!(output, b"ABORTED\n");
+        for target in &targets {
+            assert!(!target.path.exists());
+        }
+        assert_eq!(
+            service.events,
+            ["daemon-reload", "restart", "daemon-reload", "stop"]
+        );
+    }
+
+    #[test]
+    fn managed_abort_removes_only_new_files_and_preserves_existing_state_record() {
+        let (root, _, uid) = fixture();
+        let targets = managed_keyd_targets(root.path(), b"{\"active\":true}\n");
+        let record = targets.last().unwrap();
+        ensure_parent(&record.path, root.path(), uid).unwrap();
+        fs::write(&record.path, &record.bytes).unwrap();
+        fs::set_permissions(&record.path, fs::Permissions::from_mode(record.mode)).unwrap();
+        let mut service = RecordingKeyd::default();
+        let mut lifecycle = ManagedLifecycle {
+            service: &mut service,
+            prior_active: true,
+            original_active: true,
+            uninstall: false,
+        };
+        let mut output = Vec::new();
+        assert!(transaction_with_lifecycle(
+            &targets,
+            root.path(),
+            uid,
+            &mut Cursor::new(b"ABORT\n"),
+            &mut output,
+            |_| Ok(()),
+            &mut lifecycle
+        )
+        .is_err());
+        assert_eq!(output, b"READY\nABORTED\n");
+        assert!(record.path.exists());
+        for target in &targets[..2] {
+            assert!(!target.path.exists());
+        }
+    }
+
+    #[test]
+    fn uncertain_service_rollback_retains_original_state_record() {
+        let (root, _, uid) = fixture();
+        let targets = managed_keyd_targets(root.path(), b"{\"active\":true}\n");
+        let mut service = RecordingKeyd {
+            fail_restart: true,
+            ..Default::default()
+        };
+        let mut lifecycle = ManagedLifecycle {
+            service: &mut service,
+            prior_active: true,
+            original_active: true,
+            uninstall: false,
+        };
+        let error = transaction_with_lifecycle(
+            &targets,
+            root.path(),
+            uid,
+            &mut Cursor::new(b"COMMIT\n"),
+            &mut Vec::new(),
+            |_| Ok(()),
+            &mut lifecycle,
+        )
+        .unwrap_err();
+        assert!(error.contains("rollback failed"));
+        assert!(
+            targets.last().unwrap().path.exists(),
+            "original service state must survive uncertain rollback"
+        );
+    }
+    #[test]
+    fn orphan_managed_files_refuse_without_inventing_original_service_state() {
+        let (root, _, uid) = fixture();
+        let targets = managed_keyd_targets(root.path(), b"{\"active\":false}\n");
+        ensure_parent(&targets[0].path, root.path(), uid).unwrap();
+        fs::write(&targets[0].path, &targets[0].bytes).unwrap();
+        fs::set_permissions(&targets[0].path, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(original_service_state(root.path(), uid).is_err());
     }
 }

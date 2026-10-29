@@ -1,5 +1,5 @@
 use crate::options::OptionsDocument;
-use crate::profile::{game_bindings, Profile};
+use crate::profile::Profile;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -183,6 +183,7 @@ pub fn plan_controls(
     profile: &Profile,
     previous: Option<&ManagedState>,
 ) -> Result<ControlPlan, MappingError> {
+    let routing = crate::routing::RoutingPlan::compile(profile).map_err(MappingError)?;
     let empty = ManagedState::default();
     let prior = previous.unwrap_or(&empty);
     let mut conflicts = Vec::new();
@@ -274,6 +275,22 @@ pub fn plan_controls(
         effective.entry(action.into()).or_insert(encode(key)?);
         affected.insert(action.into());
     }
+    for signal in &routing.signals {
+        let key = signal
+            .accelerator
+            .rsplit('>')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let encoded = encode(&key)?;
+        for (action, output) in &effective {
+            if output == &encoded {
+                conflicts.push(format!(
+                    "internal resize signal {key} conflicts with Minecraft control {action}"
+                ));
+            }
+        }
+    }
     let mut by_key: IndexMap<String, Vec<String>> = IndexMap::new();
     for (action, output) in effective {
         by_key.entry(output).or_default().push(action);
@@ -294,6 +311,6 @@ pub fn plan_controls(
             original,
             last_emitted,
         },
-        keyd_bindings: game_bindings(profile),
+        keyd_bindings: routing.bindings,
     })
 }

@@ -1,0 +1,43 @@
+diff --git a/src/config.c b/src/config.c
+index 3557fb0..b540843 100644
+--- a/src/config.c
++++ b/src/config.c
+@@ -90,6 +90,7 @@ static struct {
+ 	{ "oneshotk", 	NULL,	OP_ONESHOTK,	{ ARG_LAYER, ARG_KEYSEQUENCE_DESCRIPTOR } },
+ 
+ 	{ "layer", 	NULL,	OP_LAYER,	{ ARG_LAYER } },
++	{ "layerk", NULL, OP_LAYERK, { ARG_LAYER, ARG_KEYSEQUENCE_DESCRIPTOR } },
+ 
+ 	{ "overload", 	NULL,	OP_OVERLOAD,			{ ARG_LAYER, ARG_DESCRIPTOR } },
+ 	{ "overloadt", 	NULL,	OP_OVERLOAD_TIMEOUT,		{ ARG_LAYER, ARG_DESCRIPTOR, ARG_TIMEOUT } },
+diff --git a/src/config.h b/src/config.h
+index f09f800..85400d2 100644
+--- a/src/config.h
++++ b/src/config.h
+@@ -57,6 +57,7 @@ enum op {
+ 	OP_SCROLL_TOGGLE_OFF,
+ 	OP_SCROLL_TOGGLE,
+ 	OP_SCROLL,
++	OP_LAYERK,
+ };
+ 
+ union descriptor_arg {
+diff --git a/src/keyboard.c b/src/keyboard.c
+index 97797c3..b72c6bc 100644
+--- a/src/keyboard.c
++++ b/src/keyboard.c
+@@ -611,10 +611,14 @@ static long process_descriptor(struct keyboard *kbd, uint8_t code,
+ 			setlayout(kbd, d->args[0].idx);
+ 
+ 		break;
++	case OP_LAYERK:
+ 	case OP_LAYERM:
+ 	case OP_LAYER:
+ 		idx = d->args[0].idx;
+ 
++		if (d->op == OP_LAYERK)
++			process_descriptor(kbd, code, &kbd->config.descriptors[d->args[1].idx], dl, pressed, time);
++
+ 		if (pressed) {
+ 			activate_layer(kbd, code, idx);
+ 		} else {

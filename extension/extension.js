@@ -21,6 +21,9 @@ const XML = `<node>
       <arg name="applied_width" type="u" direction="out"/>
       <arg name="applied_height" type="u" direction="out"/>
     </method>
+    <method name="PrepareRouting">
+      <arg name="generation" type="s" direction="in"/>
+    </method>
     <method name="ConfigurePresets">
       <arg name="configuration" type="s" direction="in"/>
     </method>
@@ -55,6 +58,7 @@ export default class McsrToolkitExtension extends Extension {
         this._openFifo();
         this._bindings = [];
         this._presets = [];
+        this._routingGeneration = '';
         this._resizeRequests = new Map();
         try {
             this._settings = this.getSettings();
@@ -65,6 +69,10 @@ export default class McsrToolkitExtension extends Extension {
     }
 
     disable() {
+        if (this._routingFenceTimeout)
+            GLib.source_remove(this._routingFenceTimeout);
+        this._routingFenceTimeout = null;
+        this._pendingRouting = null;
         this._sendEvent('', '', true);
         for (const request of this._resizeRequests?.values() ?? [])
             this._finishResize(request, 'extension disabled', null, 'org.mcsr.Toolkit.Disabled');
@@ -73,6 +81,7 @@ export default class McsrToolkitExtension extends Extension {
         for (const name of this._bindings ?? [])
             Main.wm.removeKeybinding(name);
         this._bindings = [];
+        this._routingGeneration = '';
         global.display.disconnect(this._focusSignal);
         Main.layoutManager.disconnectObject(this);
         GLib.source_remove(this._heartbeat);
@@ -84,21 +93,62 @@ export default class McsrToolkitExtension extends Extension {
         this._dbus = null;
     }
 
+    PrepareRouting(generation) {
+        if (this._routingFenceTimeout) {
+            GLib.source_remove(this._routingFenceTimeout);
+            this._routingFenceTimeout = null;
+        }
+        if (generation !== '' && !/^[a-f0-9]{64}$/.test(generation))
+            throw new Error('invalid routing generation');
+        this._removePresetBindings();
+        const previousGeneration = this._pendingRouting?.previousGeneration ?? this._routingGeneration;
+        this._routingGeneration = '';
+        this._pendingRouting = null;
+        if (generation === '') {
+            this._presets = [];
+            return;
+        }
+        if (!this._settings.set_strv('routing-fence', ['F24']))
+            throw new Error('routing fence settings failed');
+        this._pendingRouting = {generation, drained: false, previousGeneration};
+        const action = Main.wm.addKeybinding('routing-fence', this._settings, Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL, () => {
+                if (this._pendingRouting?.generation !== generation)
+                    return;
+                this._pendingRouting.drained = true;
+                this._removePresetBindings();
+            });
+        if (action === Meta.KeyBindingAction.NONE) {
+            this._pendingRouting = null;
+            throw new Error('routing fence grab failed');
+        }
+        this._bindings.push('routing-fence');
+        this._routingFenceTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 5000, () => {
+            this._routingFenceTimeout = null;
+            if (this._pendingRouting?.generation === generation)
+                this.PrepareRouting('');
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     ConfigurePresets(configuration) {
         if (!this._settings)
             throw new Error('shortcut settings unavailable');
         if (configuration.length > 8192)
             throw new Error('preset configuration too large');
-        const presets = JSON.parse(configuration);
-        if (!Array.isArray(presets) || presets.length > 8)
-            throw new Error('invalid preset configuration');
+        const envelope = JSON.parse(configuration);
+        if (!envelope || Array.isArray(envelope) || envelope.protocol !== 'mcsr-keyd-v1' ||
+            typeof envelope.generation !== 'string' || !/^[a-f0-9]{64}$/.test(envelope.generation) ||
+            !Array.isArray(envelope.presets) || envelope.presets.length > 8)
+            throw new Error('invalid preset routing protocol or configuration');
+        const {presets, generation} = envelope;
         const ids = new Set();
         const accelerators = new Set();
         for (const preset of presets) {
             if (!preset || typeof preset.id !== 'string' ||
                 !/^[a-z][a-z0-9_-]{0,31}$/.test(preset.id) || ids.has(preset.id) ||
                 typeof preset.accelerator !== 'string' ||
-                !/^(<(Control|Shift|Alt|Super)>)*[A-Za-z0-9_]+$/.test(preset.accelerator) ||
+                !/^(<(Control|Shift|Alt|Super)>)*F(1[3-9]|2[0-3])$/.test(preset.accelerator) ||
                 accelerators.has(preset.accelerator) || typeof preset.eye_zoom !== 'boolean')
                 throw new Error('invalid preset configuration');
             ids.add(preset.id);
@@ -109,14 +159,26 @@ export default class McsrToolkitExtension extends Extension {
             preset.accelerator.includes('<Shift>') ||
             accelerators.has(`<Shift>${preset.accelerator}`)))
             throw new Error('invalid eye zoom shortcut');
+        if (envelope.drain === true && (!this._pendingRouting ||
+            this._pendingRouting.generation !== generation || !this._pendingRouting.drained))
+            throw new Error('routing input drain pending');
+        if (this._pendingRouting && envelope.drain !== true)
+            throw new Error('routing input drain pending');
         const previousPresets = this._presets;
+        const previousGeneration = this._pendingRouting?.previousGeneration ?? this._routingGeneration;
+        this._pendingRouting = null;
+        if (this._routingFenceTimeout) {
+            GLib.source_remove(this._routingFenceTimeout);
+            this._routingFenceTimeout = null;
+        }
         const names = [...Array.from({length: 8}, (_, index) => `preset-${index + 1}`),
             'eye-zoom-shift'];
         const previousSettings = new Map(names.map(name => [name, this._settings.get_strv(name)]));
         this._removePresetBindings();
         try {
-            this._installPresetBindings(presets);
+            this._installPresetBindings(presets, true, generation);
             this._presets = presets;
+            this._routingGeneration = generation;
         } catch (error) {
             this._removePresetBindings();
             try {
@@ -124,11 +186,13 @@ export default class McsrToolkitExtension extends Extension {
                     if (!this._settings.set_strv(name, value))
                         throw new Error(`settings restore failed: ${name}`);
                 }
-                this._installPresetBindings(previousPresets, false);
+                this._installPresetBindings(previousPresets, false, previousGeneration);
                 this._presets = previousPresets;
+                this._routingGeneration = previousGeneration;
             } catch (restoreError) {
                 this._removePresetBindings();
                 this._presets = [];
+                this._routingGeneration = '';
                 throw new Error(`${error}; shortcut rollback failed: ${restoreError}`);
             }
             throw error;
@@ -141,24 +205,26 @@ export default class McsrToolkitExtension extends Extension {
         this._bindings = [];
     }
 
-    _installPresetBindings(presets, updateSettings = true) {
+    _installPresetBindings(presets, updateSettings = true, generation = this._routingGeneration) {
         for (let index = 1; index <= 8; index++) {
             const preset = presets[index - 1];
             const name = `preset-${index}`;
             if (updateSettings && !this._settings.set_strv(name, preset ? [preset.accelerator] : []))
                 throw new Error(`settings write failed: ${name}`);
             if (preset && minecraftWindow())
-                this._addPresetBinding(name, preset.id, false);
+                this._addPresetBinding(name, preset.id, false, generation);
         }
         const eye = presets.find(preset => preset.eye_zoom);
         if (updateSettings && !this._settings.set_strv('eye-zoom-shift',
             eye ? [`<Shift>${eye.accelerator}`] : []))
             throw new Error('settings write failed: eye-zoom-shift');
         if (eye && minecraftWindow())
-            this._addPresetBinding('eye-zoom-shift', eye.id, true);
+            this._addPresetBinding('eye-zoom-shift', eye.id, true, generation);
     }
 
     _syncPresetBindings() {
+        if (this._pendingRouting)
+            return;
         // A callback guard cannot release a Mutter grab: remove the binding itself
         // whenever the physical key belongs to another app or a Shell modal.
         if (!minecraftWindow()) {
@@ -175,12 +241,12 @@ export default class McsrToolkitExtension extends Extension {
         }
     }
 
-    _addPresetBinding(name, presetId, shifted) {
+    _addPresetBinding(name, presetId, shifted, generation) {
         const action = Main.wm.addKeybinding(name, this._settings, Meta.KeyBindingFlags.NONE,
             Shell.ActionMode.NORMAL, () => {
-                if (minecraftWindow())
+                if (minecraftWindow() && generation === this._routingGeneration)
                     this._dbus.emit_signal('PresetActivated',
-                        new GLib.Variant('(sb)', [presetId, shifted]));
+                        new GLib.Variant('(sb)', [`${generation}:${presetId}`, shifted]));
             });
         if (action === Meta.KeyBindingAction.NONE)
             throw new Error(`shortcut grab failed: ${name}`);
@@ -300,20 +366,28 @@ export default class McsrToolkitExtension extends Extension {
         });
     }
 
+    _consumerReady() {
+        if (this._pendingRouting)
+            return false;
+        const presets = this._presets ?? [];
+        const expected = presets.length + (presets.some(p => p.eye_zoom) ? 1 : 0);
+        return (this._bindings?.length ?? 0) === expected;
+    }
+
     _sendFocus() {
         for (const request of this._resizeRequests?.values() ?? [])
             this._resizeAllowed(request);
         this._syncPresetBindings();
         const window = global.display.focus_window;
         this._sendEvent(window?.get_wm_class() ?? '', window?.get_title() ?? '',
-            Main.modalCount > 0);
+            Main.modalCount > 0 || !this._consumerReady());
     }
 
     GetFocus() {
         const window = global.display.focus_window;
         const rect = window?.get_frame_rect();
         return [window?.get_wm_class() ?? '', window?.get_title() ?? '',
-            rect?.width ?? 0, rect?.height ?? 0, Main.modalCount > 0];
+            rect?.width ?? 0, rect?.height ?? 0, Main.modalCount > 0 || !this._consumerReady()];
     }
 
     _finishResize(request, error = null, dimensions = null,

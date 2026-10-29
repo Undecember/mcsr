@@ -376,6 +376,7 @@ pub fn parse_profile(bytes: &[u8], keys: &KeySet) -> Result<Profile, ProfileErro
             "physical key is assigned to both crafting and Ninjabrain".into(),
         ));
     }
+    crate::routing::RoutingPlan::compile(&profile).map_err(ProfileError)?;
     Ok(profile)
 }
 

@@ -66,6 +66,13 @@ impl ApiBackend for FakeBackend {
         publish: &dyn Fn(Option<&Profile>) -> Result<(), String>,
     ) -> Result<ApplyReport, String> {
         before()?;
+        if let Some(block) = &self.block {
+            let (lock, changed) = &**block;
+            let mut released = lock.lock().unwrap();
+            while !*released {
+                released = changed.wait(released).unwrap();
+            }
+        }
         publish(None)?;
         Ok(report())
     }
@@ -544,23 +551,26 @@ async fn native_restore_publishes_prior_profile_before_marker_removal() {
 }
 
 async fn completed_job(fixture: &Fixture, id: &str) -> Value {
-    for _ in 0..100 {
-        let (_, job) = fixture
-            .request(
-                Method::GET,
-                &format!("/api/jobs/{id}"),
-                Value::Null,
-                None,
-                None,
-                None,
-            )
-            .await;
-        if job["status"] != "running" {
-            return job;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, job) = fixture
+                .request(
+                    Method::GET,
+                    &format!("/api/jobs/{id}"),
+                    Value::Null,
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+            if job["status"] != "running" {
+                return job;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    panic!("job did not complete")
+    })
+    .await
+    .expect("job did not complete within 10 seconds")
 }
 
 struct BlockingRuntime {
@@ -589,6 +599,7 @@ impl RuntimeAdapter for BlockingRuntime {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn restore_holds_profile_lock_until_job_is_reserved() {
     let fixture = Fixture::new(true, None);
+    let job_release = Arc::new((Mutex::new(false), Condvar::new()));
     let runtime = Arc::new(BlockingRuntime {
         entered: std::sync::atomic::AtomicBool::new(false),
         released: Mutex::new(false),
@@ -611,7 +622,9 @@ async fn restore_holds_profile_lock_until_job_is_reserved() {
                 port: 8765,
                 keys: KeySet::fallback(),
             },
-            Arc::new(FakeBackend { block: None }),
+            Arc::new(FakeBackend {
+                block: Some(job_release.clone()),
+            }),
             runtime.clone(),
             Arc::new(FakeDownload),
         )
@@ -671,8 +684,14 @@ async fn restore_holds_profile_lock_until_job_is_reserved() {
         *runtime.released.lock().unwrap() = true;
         runtime.changed.notify_all();
     }
-    assert_eq!(restore.await.unwrap(), StatusCode::ACCEPTED);
-    assert_eq!(put.await.unwrap(), StatusCode::CONFLICT);
+    let restore_status = restore.await.unwrap();
+    let put_status = put.await.unwrap();
+    // Keep the reserved restore running until PUT has observed the reservation.
+    // An immediately completed fake job made the old assertion scheduler-dependent.
+    *job_release.0.lock().unwrap() = true;
+    job_release.1.notify_all();
+    assert_eq!(restore_status, StatusCode::ACCEPTED);
+    assert_eq!(put_status, StatusCode::CONFLICT);
     assert_ne!(fs::read(&profile_path).unwrap(), b"{}");
     state.drain_jobs();
 }

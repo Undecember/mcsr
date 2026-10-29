@@ -1,7 +1,7 @@
 use crate::apply::KeydAdapter;
 use crate::focus::FocusState;
 use crate::paths::{atomic_replace, remove_record, safe_record};
-use crate::profile::{game_bindings, parse_profile, render_keyd_fragment, KeySet, Profile};
+use crate::profile::{parse_profile, KeySet, Profile};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -14,8 +14,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const HELPER: &str = "/usr/local/libexec/mcsr-toolkit";
-const KEYD_RVAIYA: &str = "/usr/bin/keyd.rvaiya";
-const KEYD_FALLBACK: &str = "/usr/bin/keyd";
 
 #[derive(Debug, Clone)]
 pub struct KeydError(pub String);
@@ -93,20 +91,48 @@ impl CommandRunner for SystemCommandRunner {
         Ok(())
     }
     fn keyd_binary(&self) -> Result<&'static str, String> {
-        for binary in [KEYD_RVAIYA, KEYD_FALLBACK] {
-            let meta = match fs::symlink_metadata(binary) {
-                Ok(meta) => meta,
-                Err(_) => continue,
-            };
-            if meta.is_file()
-                && !meta.file_type().is_symlink()
-                && meta.permissions().mode() & 0o111 != 0
+        let path = Path::new(crate::managed_keyd::BINARY_PATH);
+        for component in path.ancestors() {
+            let meta = fs::symlink_metadata(component)
+                .map_err(|_| "toolkit-managed keyd is unavailable; run install/repair")?;
+            if meta.uid() != 0
+                || meta.permissions().mode() & 0o022 != 0
+                || meta.file_type().is_symlink()
+                || (component == path
+                    && (!meta.is_file() || meta.permissions().mode() & 0o7777 != 0o755))
+                || (component != path && !meta.is_dir())
             {
-                return Ok(binary);
+                return Err("unsafe toolkit-managed keyd path".into());
             }
         }
-        Err("keyd client unavailable".into())
+        if fs::read(path).map_err(|e| e.to_string())? != crate::managed_keyd::binary() {
+            return Err(
+                "toolkit-managed keyd differs from this release; run install/repair".into(),
+            );
+        }
+        verify_managed_daemon(crate::managed_keyd::BINARY_PATH)?;
+        Ok(crate::managed_keyd::BINARY_PATH)
     }
+}
+
+pub(crate) fn verify_managed_daemon(binary: &str) -> Result<(), String> {
+    let response = run_command(
+        &[binary.into(), "mcsr-daemon-capabilities".into()],
+        &[],
+        Duration::from_secs(3),
+    )
+    .map_err(|e| format!("managed keyd capability probe failed: {e}"))?;
+    verify_managed_capabilities(&response.stdout)
+}
+fn verify_managed_capabilities(response: &str) -> Result<(), String> {
+    for &capability in crate::managed_keyd::CAPABILITIES {
+        if !response.split_whitespace().any(|token| token == capability) {
+            return Err(format!(
+                "running keyd daemon lacks {capability}; run install/repair"
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn run_command(
@@ -338,7 +364,11 @@ impl KeydController {
             "bind".into(),
             "reset".into(),
         ];
-        args.extend(game_bindings(&profile));
+        args.extend(
+            crate::routing::RoutingPlan::compile(&profile)
+                .map_err(KeydError)?
+                .bindings,
+        );
         if let Err(error) = self.runner.run(&args, &[]) {
             transition.cleanup_failed = true;
             transition.clear_verified = false;
@@ -349,6 +379,17 @@ impl KeydController {
         transition.active = true;
         transition.clear_verified = false;
         transition.activate_events += 1;
+        Ok(())
+    }
+    /// Ordered output marker used only while the game producer is disabled.
+    pub fn routing_fence(&self) -> Result<(), KeydError> {
+        if !self.live_enabled {
+            return Err(KeydError("live keyd activation disabled".into()));
+        }
+        let binary = self.runner.keyd_binary().map_err(KeydError)?;
+        self.runner
+            .run(&[binary.into(), "do".into(), "f24".into()], &[])
+            .map_err(|e| KeydError(e.to_string()))?;
         Ok(())
     }
     pub fn sync_focus(&self, profile: &Profile, focus: &FocusState) -> Result<(), KeydError> {
@@ -576,7 +617,10 @@ impl KeydController {
         let mut dispatched = false;
         let id = self.helper(
             "install",
-            render_keyd_fragment(&profile).as_bytes(),
+            crate::routing::RoutingPlan::compile(&profile)
+                .map_err(KeydError)?
+                .fragment
+                .as_bytes(),
             "backup_id",
             &created,
             &mut dispatched,
@@ -774,5 +818,20 @@ mod tests {
             super::CommandFailure::TimedOut(_)
         ));
         assert!(now.elapsed() < Duration::from_secs(2));
+    }
+    #[test]
+    fn daemon_capability_probe_requires_each_complete_token() {
+        assert!(super::verify_managed_capabilities("mcsr-layerk-v1\nmcsr-matchmods-v1\n").is_ok());
+        for response in [
+            "",
+            "mcsr-layerk-v1",
+            "mcsr-matchmods-v1",
+            "mcsr-layerk-v1-extra mcsr-matchmods-v1",
+        ] {
+            assert!(
+                super::verify_managed_capabilities(response).is_err(),
+                "{response}"
+            );
+        }
     }
 }

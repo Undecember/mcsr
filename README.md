@@ -58,6 +58,16 @@ Applying a resize preset makes the focused Minecraft window borderless and resiz
 
 For a decorated XWayland Minecraft client, borderless preparation requires `xprop` (provided by `x11-utils` on Ubuntu). Install that package if a preset reports that `xprop` is missing, then retry. Already undecorated native Wayland clients can be resized, but GNOME cannot verify the absence of client-side decorations from geometry alone; native Wayland acceptance remains unvalidated. Decorated native Wayland clients require client-side borderless support or an XWayland game. The toolkit does not switch the game backend. A client can also reject a requested size. See the [resize acceptance guide](integration/resize-wayland.md) for checks and limits. The supervised 280×1000 test confirmed borderless size and centering, but its compositor-only fullscreen restoration later failed Alt+Tab recovery. Minecraft was recovered through its own fullscreen control. The corrected candidate lifecycle and shortcut-through-service path still need live acceptance; see the recorded regression in the guide.
 
+## Managed keyd and F3 priority (development build)
+
+Development builds embed a pinned, patched keyd daemon/client. Install still requires the distribution's installed, unmasked `keyd.service`. The toolkit installs `/usr/local/libexec/mcsr-keyd` and selects it through `/etc/systemd/system/keyd.service.d/90-mcsr-toolkit.conf`; it preserves the distribution executable and service enablement. The authenticated helper records the original active state in `/var/lib/mcsr-toolkit/keyd-service.json` and restores it when the owned override is removed. Keep that record for repair or uninstall; foreign overrides and changed managed files require review.
+
+Physical resize shortcuts now require live keyd mode and an applied profile. Saving a draft does not change active routing. Holding native F3, or a Crafting key mapped to F3 such as Tab, gives Minecraft priority for **F3+B**, **F3+G**, **F3+F**, **Shift+F3+F**, and **Shift+F3**. Ordinary resize and Shift eye zoom shortcuts resume after release. Typed command/chat input stays physical. This preserves B as a resize shortcut while allowing Tab+B to toggle hitboxes.
+
+Internal resize signals use unused F13–F23 keys; F24 is reserved briefly as an ordered input-drain marker during configuration changes. Preview refuses an internal signal that conflicts with an observed Minecraft control. AltGr/rightalt resize shortcuts are currently rejected because their GNOME modifier translation is not established. Configuration, capability, or grab failures keep the game producer inactive and report an error. A failed consumer grab on focus regain also blocks activation until a successful retry.
+
+The engine event tests, generated-routing tests, and sandbox installer tests do not establish live desktop acceptance. Verify all five combinations, chat, focus changes, and install/repair/uninstall recovery on the actual GNOME/Minecraft session before treating that workflow as validated. Source provenance, patch maintenance, and build details are in [the managed-keyd guide](packaging/keyd/README.md).
+
 ## Live keyd mode and recovery
 
 Live keyd activation requires the supervised focus/chat safety procedure in the [Wayland acceptance record](integration/acceptance-wayland.md) and [focus probe](integration/keyd-focus-probe.md), plus a successful helper and sudoers preflight. Do not enable live mode until those checks are accepted. When authorized, stop the managed unit before changing its mode, then use a systemd user drop-in with this exact command:
@@ -105,16 +115,17 @@ Run the matching verified executable from its download location:
 
 Use `repair` for an interrupted install, a retained install marker, or a stopped/disabled identical installation. Do not remove the marker, helper, policy files, extension lineage manifest, or recovery evidence to bypass a refusal. If an uninstall is interrupted, preserve its marker and helper and use the reviewed repair workflow before retrying.
 
-Uninstall checks user and root recovery before removal and keeps the helper if keyd or maccel recovery is uncertain. Restore toolkit-managed state first and verify the original keyd configuration and maccel baseline. Historical keyd snapshots and maccel lock/generation records are safe to retain after successful Restore. Uninstall preserves user profiles, backups, and Python-era recovery data. It removes the service unit but does not remove user service drop-ins. Before uninstall, record and review the drop-in paths; after successful uninstall, manually remove only the reviewed toolkit live-mode drop-in and run `systemctl --user daemon-reload`. A leftover drop-in blocks a later Rust install/repair and may refer to the removed executable. Guided uninstall with rollback and authentication prompt counts has not yet been tested on the supervised Rust device; beta users should review the [checklist](docs/rust-release-checklist.md) before trying it and report issues through the [GitHub issue tracker](https://github.com/Undecember/mcsr/issues).
+Uninstall checks user and root recovery before removal and keeps the helper if keyd or maccel recovery is uncertain. For managed-keyd builds it removes only the verified owned binary and override, reloads the system service configuration, and restores the recorded original keyd active state. It leaves the distribution executable and service enablement intact. Restore toolkit-managed state first and verify the original keyd configuration and maccel baseline. Historical keyd snapshots and maccel lock/generation records are safe to retain after successful Restore. Uninstall preserves user profiles, backups, and Python-era recovery data. It removes the service unit but does not remove user service drop-ins. Before uninstall, record and review the drop-in paths; after successful uninstall, manually remove only the reviewed toolkit live-mode drop-in and run `systemctl --user daemon-reload`. A leftover drop-in blocks a later Rust install/repair and may refer to the removed executable. Guided uninstall with rollback and authentication prompt counts has not yet been tested on the supervised Rust device; beta users should review the [checklist](docs/rust-release-checklist.md) before trying it and report issues through the [GitHub issue tracker](https://github.com/Undecember/mcsr/issues).
 
 ## Build and deterministic checks
 
-On Ubuntu x86_64 with Rust, Node.js, and `glib-compile-schemas` available, build and check the candidate:
+On native Ubuntu x86_64 with Rust, Node.js, Python 3, a C compiler, `patch`, and `glib-compile-schemas` available, build and check the candidate:
 
 ```sh
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
+python3 packaging/keyd/test.py
 node tests/extension_harness.cjs
 node tests/ui_harness.cjs
 node integration/live-ui-acceptance.mjs self-test
@@ -123,7 +134,7 @@ cargo build --release --locked
 cargo test --release --locked --test rust_assets
 ```
 
-The release executable embeds the browser assets and extension archive and has no Python runtime dependency. From the repository root, create and verify a checksum beside the local candidate:
+The release executable embeds the browser assets, extension archive, and patched keyd binary. Python is used for development engine tests; the installed executable has no Python runtime dependency. From the repository root, create and verify a checksum beside the local candidate:
 
 ```sh
 (cd target/release && sha256sum mcsr-toolkit > mcsr-toolkit.sha256 && sha256sum --check mcsr-toolkit.sha256)

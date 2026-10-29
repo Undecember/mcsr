@@ -37,6 +37,8 @@ const applySize = w => {w.frame = {...w.moves.at(-1)}; w.content = {...w.frame};
 const bindings = new Map();
 const settings = new Map();
 const emitted = [];
+const generation = 'a'.repeat(64);
+const configuration = (presets, gen = generation) => JSON.stringify({protocol: 'mcsr-keyd-v1', generation: gen, presets});
 let grabFailure = null;
 let addFailure = null;
 let setFailure = null;
@@ -80,20 +82,20 @@ extension._bindings = [];
 extension._presets = [];
 extension._resizeRequests = new Map();
 extension._dbus = {emit_signal: (name, value) => emitted.push([name, value.type, value.value])};
-extension.ConfigurePresets(JSON.stringify([
-    {id: 'normal', accelerator: 'F6', eye_zoom: false},
-    {id: 'eye', accelerator: 'F7', eye_zoom: true},
+extension.ConfigurePresets(configuration([
+    {id: 'normal', accelerator: 'F13', eye_zoom: false},
+    {id: 'eye', accelerator: 'F14', eye_zoom: true},
 ]));
-assert.deepEqual(Array.from(settings.get('eye-zoom-shift')), ['<Shift>F7']);
+assert.deepEqual(Array.from(settings.get('eye-zoom-shift')), ['<Shift>F14']);
 assert.equal(bindings.size, 0, 'no global grabs while Minecraft is unfocused');
 focused = makeWindow({get_wm_class: () => 'Minecraft 1.16.1', move_resize_frame(_u, x, y, width, height) {requested = {x, y, width, height};}});
 extension._sendFocus();
 bindings.get('preset-2')();
 assert.equal(emitted[0][0], 'PresetActivated');
 assert.equal(emitted[0][1], '(sb)');
-assert.deepEqual(Array.from(emitted[0][2]), ['eye', false]);
+assert.deepEqual(Array.from(emitted[0][2]), [`${generation}:eye`, false]);
 bindings.get('eye-zoom-shift')();
-assert.deepEqual(Array.from(emitted[1][2]), ['eye', true]);
+assert.deepEqual(Array.from(emitted[1][2]), [`${generation}:eye`, true]);
 const staleBinding = bindings.get('preset-1');
 modal = 1;
 extension._sendFocus();
@@ -308,9 +310,9 @@ extension._retry = null;
 extension._openFifo();
 assert.equal(opened, false);
 // Reconfiguration drops stale bindings and an invalid replacement leaves valid ones intact.
-extension.ConfigurePresets('[{"id":"only","accelerator":"F8","eye_zoom":false}]');
+extension.ConfigurePresets(configuration(JSON.parse('[{"id":"only","accelerator":"F15","eye_zoom":false}]')));
 assert.equal(bindings.size, 0);
-assert.throws(() => extension.ConfigurePresets('[{"id":"bad","accelerator":"F8","eye_zoom":true},{"id":"bad","accelerator":"F9","eye_zoom":false}]'));
+assert.throws(() => extension.ConfigurePresets(configuration(JSON.parse('[{"id":"bad","accelerator":"F15","eye_zoom":true},{"id":"bad","accelerator":"F16","eye_zoom":false}]'))));
 assert.equal(bindings.size, 0);
 // Limits are checked before Mutter is touched, and loss of focus cancels pending observation.
 focused = makeWindow({move_resize_frame(_u, x, y, width, height) {requested = {x, y, width, height};}});
@@ -328,19 +330,32 @@ assert.equal(extension._resizeRequests.size, 0);
 focused = {get_wm_class: () => 'Minecraft'};
 extension._sendFocus();
 // GNOME reports failed grabs as NONE; retain the prior working shortcut on failure.
-const replacement = '[{"id":"new","accelerator":"F10","eye_zoom":false},{"id":"next","accelerator":"F11","eye_zoom":false}]';
+const replacement = configuration(JSON.parse('[{"id":"new","accelerator":"F17","eye_zoom":false},{"id":"next","accelerator":"F18","eye_zoom":false}]'), 'b'.repeat(64));
 for (const failure of ['grab', 'add', 'settings']) {
     if (failure === 'grab') grabFailure = 'preset-2';
     if (failure === 'add') addFailure = 'preset-2';
     if (failure === 'settings') setFailure = 'preset-2';
     assert.throws(() => extension.ConfigurePresets(replacement), /grab|mid-add|settings/);
     assert.deepEqual(Array.from(bindings.keys()), ['preset-1']);
-    assert.deepEqual(Array.from(settings.get('preset-1')), ['F8']);
+    assert.deepEqual(Array.from(settings.get('preset-1')), ['F15']);
     assert.deepEqual(Array.from(settings.get('preset-2')), []);
     focused = {get_wm_class: () => 'Minecraft'};
     bindings.get('preset-1')();
-    assert.deepEqual(Array.from(emitted.at(-1)[2]), ['only', false]);
+    assert.deepEqual(Array.from(emitted.at(-1)[2]), [`${generation}:only`, false]);
 }
+
+// Reject incompatible wire shapes before touching existing bindings.
+assert.throws(() => extension.ConfigurePresets('[]'), /protocol|configuration/);
+assert.throws(() => extension.ConfigurePresets(JSON.stringify({protocol: 'other', generation, presets: []})), /protocol|configuration/);
+const beforeReconfigure = bindings.get('preset-1');
+const sameIdGeneration = 'c'.repeat(64);
+extension.ConfigurePresets(configuration([{id: 'only', accelerator: 'F15', eye_zoom: false}], sameIdGeneration));
+const previousEmissionCount = emitted.length;
+beforeReconfigure();
+assert.equal(emitted.length, previousEmissionCount, 'old callback cannot emit a new-generation command');
+bindings.get('preset-1')();
+assert.deepEqual(Array.from(emitted.at(-1)[2]), [`${sameIdGeneration}:only`, false]);
+
 // A path may turn into a regular file during async open. Verify the opened stream.
 context.Gio.Credentials = class {get_unix_user() {return 1000;}};
 const fileInfo = (mode, uid = 1000, inode = '123') => ({
@@ -412,7 +427,7 @@ assert.equal(extension._writingBytes, null);
 // installation failure removes every partial grab before the next retry.
 focused = null;
 extension._presets = [];
-extension.ConfigurePresets('[{"id":"letter","accelerator":"s","eye_zoom":false},{"id":"next","accelerator":"F11","eye_zoom":false}]');
+extension.ConfigurePresets(configuration(JSON.parse('[{"id":"letter","accelerator":"F19","eye_zoom":false},{"id":"next","accelerator":"F18","eye_zoom":false}]')));
 assert.equal(bindings.size, 0);
 focused = {get_wm_class: () => 'Minecraft'};
 grabFailure = 'preset-2';
@@ -435,3 +450,38 @@ disabling.disable();
 assert.equal(bindings.size, 0);
 assert.equal(canceled, true);
 assert.equal(unexported, true);
+
+// A grab collision first encountered on focus regain must block producer focus.
+focused = null;
+extension.ConfigurePresets(configuration([{id: 'late', accelerator: 'F13', eye_zoom: false}]));
+focused = makeWindow();
+grabFailure = 'preset-1';
+context.Toolkit.prototype._sendFocus.call(extension);
+assert.equal(bindings.size, 0);
+assert.equal(extension.GetFocus()[4], true, 'unavailable resize consumer must report blocked focus');
+context.Toolkit.prototype._sendFocus.call(extension);
+assert.equal(extension.GetFocus()[4], false, 'successful retry restores consumer readiness');
+
+// New bindings cannot be committed until an ordered keyd marker has drained input.
+const nextGeneration = 'c'.repeat(64);
+const beforeDrain = bindings.get('preset-1');
+extension.PrepareRouting(nextGeneration);
+assert.deepEqual([...bindings.keys()], ['routing-fence']);
+assert.equal(extension.GetFocus()[4], true);
+const pendingConfig = JSON.stringify({protocol:'mcsr-keyd-v1',generation:nextGeneration,drain:true,presets:[{id:'drained',accelerator:'F13',eye_zoom:false}]});
+assert.throws(() => extension.ConfigurePresets(pendingConfig), /input drain pending/);
+const countBeforeOld = emitted.length;
+beforeDrain();
+assert.equal(emitted.length, countBeforeOld);
+bindings.get('routing-fence')();
+assert.equal(extension.GetFocus()[4], true);
+extension.ConfigurePresets(pendingConfig);
+assert.equal(extension.GetFocus()[4], false);
+assert.deepEqual([...bindings.keys()], ['preset-1']);
+extension.PrepareRouting('d'.repeat(64));
+extension.PrepareRouting('');
+assert.equal(bindings.size, 0, 'aborted drain releases the temporary fence grab');
+
+extension.PrepareRouting('e'.repeat(64));
+tick(5000);
+assert.equal(bindings.size,0,'abandoned input drain expires without a service abort');

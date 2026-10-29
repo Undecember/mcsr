@@ -1,0 +1,412 @@
+{
+  "direct": {
+    "f3-b": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-b.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nb down                        f13 down\nb up                          f13 up\nf3 up                         f3 up\n"
+    },
+    "f3-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf down                        f15 down\nf up                          f15 up\nf3 up                         f3 up\n"
+    },
+    "f3-g": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-g.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\ng down                        f14 down\ng up                          f14 up\nf3 up                         f3 up\n"
+    },
+    "f3-repeat-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-repeat-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf down                        f15 down\nf up                          f15 up\nf down                        f15 down\nf up                          f15 up\nf3 up                         f3 up\n"
+    },
+    "f3-shift-after": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-after.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "f3-shift-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-f.t FAILED\n\nExpected                      Output\n\nleftshift down                leftshift down\nf3 down                       f3 down\nf down                        f15 down\nf up                          f15 up\nf3 up                         f3 up\nleftshift up                  leftshift up\n"
+    },
+    "f3-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "f3-tap-then-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-tap-then-resize.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "release-f3-first": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/release-f3-first.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nb down                        f13 down\nf3 up                         f3 up\nb up                          f13 up\nf13 down                      f13 down\nf13 up                        f13 up\n"
+    },
+    "several-combinations": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/several-combinations.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nb down                        f13 down\nb up                          f13 up\ng down                        f14 down\ng up                          f14 up\nf down                        f15 down\nf up                          f15 up\nleftshift down                leftshift down\nf down                        f15 down\nf up                          f15 up\nleftshift up                  leftshift up\nf down                        f15 down\nf up                          f15 up\nf3 up                         f3 up\nf13 down                      f13 down\nf13 up                        f13 up\n"
+    },
+    "shift-release-first": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/shift-release-first.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tab-b": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-b.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nb down                        f13 down\nb up                          f13 up\nf3 up                         f3 up\n"
+    },
+    "tab-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf down                        f15 down\nf up                          f15 up\nf3 up                         f3 up\n"
+    },
+    "tab-g": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-g.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\ng down                        f14 down\ng up                          f14 up\nf3 up                         f3 up\n"
+    },
+    "tab-repeat-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-repeat-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf down                        f15 down\nf up                          f15 up\nf down                        f15 down\nf up                          f15 up\nf3 up                         f3 up\n"
+    },
+    "tab-shift-after": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-after.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-shift-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-f.t FAILED\n\nExpected                      Output\n\nleftshift down                leftshift down\nf3 down                       f3 down\nf down                        f15 down\nf up                          f15 up\nf3 up                         f3 up\nleftshift up                  leftshift up\n"
+    },
+    "tab-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tab-tap-then-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-tap-then-resize.t PASSED (3 us)\n\nTotal time spent in the main loop: 3 us\n"
+    },
+    "tap-immediate-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tap-immediate-resize.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    }
+  },
+  "overload": {
+    "f3-b": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-b.t FAILED\n\nExpected                      Output\n\nf3 down                       b down\nb down                        b up\nb up                          \nf3 up                         \n"
+    },
+    "f3-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f down\nf down                        f up\nf up                          \nf3 up                         \n"
+    },
+    "f3-g": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-g.t FAILED\n\nExpected                      Output\n\nf3 down                       g down\ng down                        g up\ng up                          \nf3 up                         \n"
+    },
+    "f3-repeat-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-repeat-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f down\nf down                        f up\nf up                          f down\nf down                        f up\nf up                          \nf3 up                         \n"
+    },
+    "f3-shift-after": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-after.t FAILED\n\nExpected                      Output\n\nf3 down                       leftshift down\nleftshift down                leftshift up\nf3 up                         \nleftshift up                  \n"
+    },
+    "f3-shift-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-f.t FAILED\n\nExpected                      Output\n\nleftshift down                leftshift down\nf3 down                       f down\nf down                        f up\nf up                          leftshift up\nf3 up                         \nleftshift up                  \n"
+    },
+    "f3-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-tap-then-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-tap-then-resize.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "release-f3-first": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/release-f3-first.t FAILED\n\nExpected                      Output\n\nf3 down                       b down\nb down                        b up\nf3 up                         f13 down\nb up                          f13 up\nf13 down                      \nf13 up                        \n"
+    },
+    "several-combinations": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/several-combinations.t FAILED\n\nExpected                      Output\n\nf3 down                       b down\nb down                        b up\nb up                          g down\ng down                        g up\ng up                          f down\nf down                        f up\nf up                          leftshift down\nleftshift down                f down\nf down                        f up\nf up                          leftshift up\nleftshift up                  f down\nf down                        f up\nf up                          f13 down\nf3 up                         f13 up\nf13 down                      \nf13 up                        \n"
+    },
+    "shift-release-first": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/shift-release-first.t FAILED\n\nExpected                      Output\n\nleftshift down                leftshift down\nf3 down                       leftshift up\nleftshift up                  f3 down\nf3 up                         f3 up\n"
+    },
+    "tab-b": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-b.t FAILED\n\nExpected                      Output\n\nf3 down                       b down\nb down                        b up\nb up                          \nf3 up                         \n"
+    },
+    "tab-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f down\nf down                        f up\nf up                          \nf3 up                         \n"
+    },
+    "tab-g": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-g.t FAILED\n\nExpected                      Output\n\nf3 down                       g down\ng down                        g up\ng up                          \nf3 up                         \n"
+    },
+    "tab-repeat-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-repeat-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f down\nf down                        f up\nf up                          f down\nf down                        f up\nf up                          \nf3 up                         \n"
+    },
+    "tab-shift-after": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-after.t FAILED\n\nExpected                      Output\n\nf3 down                       leftshift down\nleftshift down                leftshift up\nf3 up                         \nleftshift up                  \n"
+    },
+    "tab-shift-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-f.t FAILED\n\nExpected                      Output\n\nleftshift down                leftshift down\nf3 down                       f down\nf down                        f up\nf up                          leftshift up\nf3 up                         \nleftshift up                  \n"
+    },
+    "tab-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tab-tap-then-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-tap-then-resize.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tap-immediate-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tap-immediate-resize.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    }
+  },
+  "layerm": {
+    "f3-b": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-b.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nb down                        f3 up\nb up                          b down\nf3 up                         b up\n"
+    },
+    "f3-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf down                        f3 up\nf up                          f down\nf3 up                         f up\n"
+    },
+    "f3-g": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-g.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\ng down                        f3 up\ng up                          g down\nf3 up                         g up\n"
+    },
+    "f3-repeat-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-repeat-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf down                        f3 up\nf up                          f down\nf down                        f up\nf up                          f down\nf3 up                         f up\n"
+    },
+    "f3-shift-after": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-after.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nleftshift down                f3 up\nf3 up                         leftshift down\nleftshift up                  leftshift up\n"
+    },
+    "f3-shift-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-f.t FAILED\n\nExpected                      Output\n\nleftshift down                leftshift down\nf3 down                       f3 down\nf down                        f3 up\nf up                          f down\nf3 up                         f up\nleftshift up                  leftshift up\n"
+    },
+    "f3-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-tap-then-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-tap-then-resize.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "release-f3-first": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/release-f3-first.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nb down                        f3 up\nf3 up                         b down\nb up                          b up\nf13 down                      f13 down\nf13 up                        f13 up\n"
+    },
+    "several-combinations": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/several-combinations.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nb down                        f3 up\nb up                          b down\ng down                        b up\ng up                          g down\nf down                        g up\nf up                          f down\nleftshift down                f up\nf down                        leftshift down\nf up                          f down\nleftshift up                  f up\nf down                        leftshift up\nf up                          f down\nf3 up                         f up\nf13 down                      f13 down\nf13 up                        f13 up\n"
+    },
+    "shift-release-first": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/shift-release-first.t FAILED\n\nExpected                      Output\n\nleftshift down                leftshift down\nf3 down                       f3 down\nleftshift up                  f3 up\nf3 up                         leftshift up\n"
+    },
+    "tab-b": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-b.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nb down                        f3 up\nb up                          b down\nf3 up                         b up\n"
+    },
+    "tab-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf down                        f3 up\nf up                          f down\nf3 up                         f up\n"
+    },
+    "tab-g": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-g.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\ng down                        f3 up\ng up                          g down\nf3 up                         g up\n"
+    },
+    "tab-repeat-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-repeat-f.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf down                        f3 up\nf up                          f down\nf down                        f up\nf up                          f down\nf3 up                         f up\n"
+    },
+    "tab-shift-after": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-after.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nleftshift down                f3 up\nf3 up                         leftshift down\nleftshift up                  leftshift up\n"
+    },
+    "tab-shift-f": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-f.t FAILED\n\nExpected                      Output\n\nleftshift down                leftshift down\nf3 down                       f3 down\nf down                        f3 up\nf up                          f down\nf3 up                         f up\nleftshift up                  leftshift up\n"
+    },
+    "tab-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tab-tap-then-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-tap-then-resize.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tap-immediate-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tap-immediate-resize.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    }
+  },
+  "oneshotk": {
+    "f3-b": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-b.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "f3-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-f.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "f3-g": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-g.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "f3-repeat-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-repeat-f.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-shift-after": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-after.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-shift-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-f.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "f3-tap-then-resize": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-tap-then-resize.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf3 up                         f3 up\nf13 down                      b down\nf13 up                        b up\n"
+    },
+    "release-f3-first": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/release-f3-first.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "several-combinations": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/several-combinations.t PASSED (8 us)\n\nTotal time spent in the main loop: 8 us\n"
+    },
+    "shift-release-first": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/shift-release-first.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-b": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-b.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-f.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-g": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-g.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-repeat-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-repeat-f.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-shift-after": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-after.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-shift-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-f.t PASSED (6 us)\n\nTotal time spent in the main loop: 6 us\n"
+    },
+    "tab-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-tap-then-resize": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-tap-then-resize.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf3 up                         f3 up\nf13 down                      b down\nf13 up                        b up\n"
+    },
+    "tap-immediate-resize": {
+      "passed": false,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tap-immediate-resize.t FAILED\n\nExpected                      Output\n\nf3 down                       f3 down\nf3 up                         f3 up\nf13 down                      b down\nf13 up                        b up\n"
+    }
+  },
+  "layerk": {
+    "f3-b": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-b.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-f.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-g": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-g.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "f3-repeat-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-repeat-f.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-shift-after": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-after.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-shift-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift-f.t PASSED (6 us)\n\nTotal time spent in the main loop: 6 us\n"
+    },
+    "f3-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-shift.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "f3-tap-then-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/f3-tap-then-resize.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "release-f3-first": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/release-f3-first.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "several-combinations": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/several-combinations.t PASSED (8 us)\n\nTotal time spent in the main loop: 8 us\n"
+    },
+    "shift-release-first": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/shift-release-first.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tab-b": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-b.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tab-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-f.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tab-g": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-g.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-repeat-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-repeat-f.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-shift-after": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-after.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tab-shift-f": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift-f.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-shift": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-shift.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    },
+    "tab-tap-then-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tab-tap-then-resize.t PASSED (4 us)\n\nTotal time spent in the main loop: 4 us\n"
+    },
+    "tap-immediate-resize": {
+      "passed": true,
+      "trace": "/tmp/mcsr-f3-keyd-proof/proof/tap-immediate-resize.t PASSED (5 us)\n\nTotal time spent in the main loop: 5 us\n"
+    }
+  }
+}

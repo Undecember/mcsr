@@ -6,12 +6,18 @@ use std::{
 use mcsr_toolkit::focus::{FocusEvent, FocusListener, FocusState};
 use mcsr_toolkit::gnome::{GnomeBridge, GnomeError, GnomePeer, ResizeError};
 use mcsr_toolkit::profile::{Profile, ResizePreset};
+async fn wire<P: GnomePeer>(bridge: &GnomeBridge<P>, id: &str) -> String {
+    bridge.preset_signal_id(id).await.unwrap()
+}
+
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 #[derive(Default)]
 struct FakePeer {
     focus: Mutex<(String, String, u32, u32, bool)>,
     config: Mutex<String>,
+    fail_configuration: AtomicBool,
     applied: Mutex<(u32, u32)>,
 }
 
@@ -20,6 +26,9 @@ impl GnomePeer for FakePeer {
         Ok(self.focus.lock().await.clone())
     }
     async fn configure_presets(&self, json: String) -> Result<(), GnomeError> {
+        if self.fail_configuration.load(Ordering::SeqCst) {
+            return Err(GnomeError("injected configuration failure".into()));
+        }
         *self.config.lock().await = json;
         Ok(())
     }
@@ -67,10 +76,15 @@ async fn profile_configuration_uses_extension_json_shape() {
         eye_zoom: false,
     });
     bridge.configure_presets(&profile).await.unwrap();
+    let value: serde_json::Value = serde_json::from_str(&peer.config.lock().await).unwrap();
+    assert_eq!(value["protocol"], "mcsr-keyd-v1");
     assert_eq!(
-        &*peer.config.lock().await,
-        r#"[{"id":"normal","accelerator":"<Control>F6","eye_zoom":false}]"#
+        value["profile_generation"],
+        mcsr_toolkit::routing::RoutingPlan::compile(&profile)
+            .unwrap()
+            .generation
     );
+    assert_eq!(value["presets"][0]["accelerator"], "<Control>F13");
 }
 
 #[tokio::test]
@@ -93,10 +107,14 @@ async fn stale_preset_signal_is_rejected_after_reconfiguration() {
         eye_zoom: false,
     });
     bridge.configure_presets(&profile).await.unwrap();
+    let old_wire = wire(&bridge, "old").await;
     profile.presets[0].id = "new".into();
     bridge.configure_presets(&profile).await.unwrap();
-    assert!(!bridge.accept_preset_signal("old", false).await.unwrap());
-    assert!(bridge.accept_preset_signal("new", false).await.unwrap());
+    assert!(!bridge.accept_preset_signal(&old_wire, false).await.unwrap());
+    assert!(bridge
+        .accept_preset_signal(&wire(&bridge, "new").await, false)
+        .await
+        .unwrap());
 }
 
 #[tokio::test]
@@ -150,11 +168,20 @@ async fn preset_signal_requires_live_fifo_heartbeat_even_when_bus_reports_minecr
         .lock()
         .unwrap()
         .observe_at(event(), Instant::now() - Duration::from_secs(3));
-    assert!(!bridge.accept_preset_signal("normal", false).await.unwrap());
+    assert!(!bridge
+        .accept_preset_signal(&wire(&bridge, "normal").await, false)
+        .await
+        .unwrap());
     focus.lock().unwrap().observe(event());
-    assert!(bridge.accept_preset_signal("normal", false).await.unwrap());
+    assert!(bridge
+        .accept_preset_signal(&wire(&bridge, "normal").await, false)
+        .await
+        .unwrap());
     focus.lock().unwrap().disconnect();
-    assert!(!bridge.accept_preset_signal("normal", false).await.unwrap());
+    assert!(!bridge
+        .accept_preset_signal(&wire(&bridge, "normal").await, false)
+        .await
+        .unwrap());
 }
 
 struct NonReplyingPeer;
@@ -229,7 +256,10 @@ async fn bridge_stale_check_leaves_expiry_transition_for_runtime_watch() {
         },
         Instant::now() - Duration::from_secs(3),
     );
-    assert!(!bridge.accept_preset_signal("normal", false).await.unwrap());
+    assert!(!bridge
+        .accept_preset_signal(&wire(&bridge, "normal").await, false)
+        .await
+        .unwrap());
     assert!(
         *effective_rx.borrow(),
         "listener has not run its expiry tick yet"
@@ -245,10 +275,10 @@ async fn bridge_stale_check_leaves_expiry_transition_for_runtime_watch() {
 }
 
 #[tokio::test]
-async fn captured_special_keys_become_gnome_accelerators() {
+async fn captured_special_keys_route_through_internal_gnome_accelerators() {
     let peer = Arc::new(FakePeer::default());
     let bridge = GnomeBridge::new(peer.clone(), Arc::new(StdMutex::new(FocusState::default())));
-    for (key, symbol) in [
+    for (key, _symbol) in [
         ("capslock", "Caps_Lock"),
         ("numlock", "Num_Lock"),
         ("scrolllock", "Scroll_Lock"),
@@ -283,10 +313,156 @@ async fn captured_special_keys_become_gnome_accelerators() {
         });
         bridge.configure_presets(&profile).await.unwrap();
         let value: serde_json::Value = serde_json::from_str(&peer.config.lock().await).unwrap();
-        assert_eq!(
-            value[0]["accelerator"],
-            format!("<Control>{symbol}"),
-            "{key}"
-        );
+        assert_eq!(value["presets"][0]["accelerator"], "<Control>F13", "{key}");
     }
+}
+
+#[tokio::test]
+async fn reused_preset_id_rejects_previous_generation() {
+    let peer = Arc::new(FakePeer::default());
+    *peer.focus.lock().await = ("Minecraft".into(), "Game".into(), 854, 517, false);
+    let focus = Arc::new(StdMutex::new(FocusState::default()));
+    focus.lock().unwrap().observe(FocusEvent {
+        window_class: "Minecraft".into(),
+        title: "Game".into(),
+        modal: false,
+    });
+    let bridge = GnomeBridge::new(peer, focus);
+    let mut profile = Profile::default();
+    profile.presets.push(ResizePreset {
+        id: "normal".into(),
+        width: 800,
+        height: 600,
+        shortcut: "b".into(),
+        eye_zoom: false,
+    });
+    bridge.configure_presets(&profile).await.unwrap();
+    let old = wire(&bridge, "normal").await;
+    assert!(bridge.accept_preset_signal(&old, false).await.unwrap());
+    profile.presets[0].width = 900;
+    bridge.configure_presets(&profile).await.unwrap();
+    assert!(!bridge.accept_preset_signal(&old, false).await.unwrap());
+    assert!(!bridge.accept_preset_signal("normal", false).await.unwrap());
+    assert!(bridge
+        .accept_preset_signal(&wire(&bridge, "normal").await, false)
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
+async fn failed_configuration_invalidates_previous_signal_generation() {
+    let peer = Arc::new(FakePeer::default());
+    *peer.focus.lock().await = ("Minecraft".into(), "Game".into(), 854, 517, false);
+    let focus = Arc::new(StdMutex::new(FocusState::default()));
+    focus.lock().unwrap().observe(FocusEvent {
+        window_class: "Minecraft".into(),
+        title: "Game".into(),
+        modal: false,
+    });
+    let bridge = GnomeBridge::new(peer.clone(), focus);
+    let mut profile = Profile::default();
+    profile.presets.push(ResizePreset {
+        id: "normal".into(),
+        width: 800,
+        height: 600,
+        shortcut: "b".into(),
+        eye_zoom: false,
+    });
+    bridge.configure_presets(&profile).await.unwrap();
+    let old = wire(&bridge, "normal").await;
+    assert!(bridge.accept_preset_signal(&old, false).await.unwrap());
+    peer.fail_configuration.store(true, Ordering::SeqCst);
+    profile.presets[0].width = 900;
+    assert!(bridge.configure_presets(&profile).await.is_err());
+    assert!(!bridge.accept_preset_signal(&old, false).await.unwrap());
+}
+
+#[tokio::test]
+async fn identical_profile_reconnect_rejects_old_activation_signal() {
+    let peer = Arc::new(FakePeer::default());
+    *peer.focus.lock().await = ("Minecraft".into(), "Game".into(), 854, 480, false);
+    let focus = Arc::new(StdMutex::new(FocusState::default()));
+    focus.lock().unwrap().observe(FocusEvent {
+        window_class: "Minecraft".into(),
+        title: "Game".into(),
+        modal: false,
+    });
+    let bridge = GnomeBridge::new(peer, focus);
+    let mut profile = Profile::default();
+    profile.presets.push(ResizePreset {
+        id: "normal".into(),
+        width: 854,
+        height: 480,
+        shortcut: "b".into(),
+        eye_zoom: false,
+    });
+    bridge.configure_presets(&profile).await.unwrap();
+    let old = wire(&bridge, "normal").await;
+    bridge.configure_presets(&profile).await.unwrap();
+    assert!(!bridge.accept_preset_signal(&old, false).await.unwrap());
+}
+
+struct FencedPeer {
+    events: Arc<StdMutex<Vec<&'static str>>>,
+    attempts: std::sync::atomic::AtomicUsize,
+}
+impl GnomePeer for FencedPeer {
+    async fn get_focus(&self) -> Result<(String, String, u32, u32, bool), GnomeError> {
+        Ok(("Minecraft".into(), "Game".into(), 854, 480, false))
+    }
+    async fn prepare_routing(&self, generation: String) -> Result<(), GnomeError> {
+        self.events.lock().unwrap().push(if generation.is_empty() {
+            "abort"
+        } else {
+            "prepare"
+        });
+        Ok(())
+    }
+    async fn configure_presets(&self, json: String) -> Result<(), GnomeError> {
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["drain"], true);
+        self.events.lock().unwrap().push("configure");
+        if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            Err(GnomeError("routing input drain pending".into()))
+        } else {
+            Ok(())
+        }
+    }
+    async fn resize_focused(&self, w: u32, h: u32) -> Result<(u32, u32), GnomeError> {
+        Ok((w, h))
+    }
+}
+#[tokio::test]
+async fn routing_prepares_then_emits_ordered_marker_then_waits_for_consumer() {
+    let events = Arc::new(StdMutex::new(vec![]));
+    let bridge = GnomeBridge::new(
+        Arc::new(FencedPeer {
+            events: events.clone(),
+            attempts: 0.into(),
+        }),
+        Arc::new(StdMutex::new(FocusState::default())),
+    );
+    bridge
+        .configure_presets_with_fence(&Profile::default(), || {
+            events.lock().unwrap().push("marker");
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["prepare", "marker", "configure", "configure"]
+    );
+    events.lock().unwrap().clear();
+    assert!(bridge
+        .configure_presets_with_fence(&Profile::default(), || {
+            events.lock().unwrap().push("marker-failed");
+            Err("keyd unavailable".into())
+        })
+        .await
+        .is_err());
+    assert_eq!(
+        *events.lock().unwrap(),
+        ["prepare", "marker-failed", "abort"]
+    );
 }

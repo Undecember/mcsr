@@ -1,0 +1,5 @@
+Repository: https://github.com/rvaiya/keyd
+Commit: f564288ac2b19d2305a5b39023c474805ff8fce5
+Version: 2.6.0 development snapshot
+Vendored paths: src/, t/, docs/keyd.scdoc, Makefile, LICENSE
+Source is pristine; packaging/keyd/mcsr.patch is applied only in build staging.

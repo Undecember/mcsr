@@ -202,10 +202,12 @@ pub trait HelperSystem {
 }
 
 fn select_keyd_client_with(mut trusted: impl FnMut(&Path) -> bool) -> Result<&'static str, String> {
-    ["/usr/bin/keyd.rvaiya", "/usr/bin/keyd"]
-        .into_iter()
-        .find(|path| trusted(Path::new(path)))
-        .ok_or_else(|| "keyd client unavailable".into())
+    let path = crate::managed_keyd::BINARY_PATH;
+    if trusted(Path::new(path)) {
+        Ok(path)
+    } else {
+        Err("toolkit-managed keyd client unavailable or unsafe; run install/repair".into())
+    }
 }
 
 pub struct RealSystem {
@@ -221,7 +223,10 @@ impl Default for RealSystem {
 impl HelperSystem for RealSystem {
     fn list_keys(&mut self) -> Result<String, String> {
         let fs = HelperFilesystem::production();
-        let path = select_keyd_client_with(|path| fs.verify_file(path, true, false).is_ok())?;
+        let path = select_keyd_client_with(|path| {
+            fs.verify_file(path, true, false).is_ok()
+                && fs::read(path).is_ok_and(|bytes| bytes == crate::managed_keyd::binary())
+        })?;
         run_command(
             &[path.into(), "list-keys".into()],
             &[],
@@ -243,7 +248,12 @@ impl HelperSystem for RealSystem {
             &[],
             Duration::from_secs(5),
         ) {
-            Ok(_) => Ok(true),
+            Ok(_) => {
+                if action == "is-active" {
+                    crate::keyd::verify_managed_daemon(crate::managed_keyd::BINARY_PATH)?;
+                }
+                Ok(true)
+            }
             Err(CommandFailure::Failed(_)) => Ok(false),
             Err(CommandFailure::TimedOut(message)) => Err(message),
         }
@@ -332,18 +342,31 @@ fn validate_fragment(fragment: &str, keys: &HashSet<String>) -> Result<(), Strin
         return Err("invalid keyd fragment section".into());
     }
     let mut seen = HashSet::new();
+    let mut priority = false;
     for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        if line == "[mcsr_f3]" && !priority {
+            priority = true;
+            seen.clear();
+            continue;
+        }
         let (key, action) = line
             .split_once(" = ")
             .ok_or("invalid keyd fragment binding")?;
         if !valid_key(key) || !keys.contains(key) || !seen.insert(key) {
             return Err("invalid keyd fragment binding".into());
         }
-        if action != key
-            && action != format!("clearm({key})")
-            && action != "clearm(enter)"
-            && action != "clearm(esc)"
-        {
+        let permitted = action == key
+            || if priority {
+                action == "layerk(mcsr_f3, f3)" || action == format!("togglem(mcsr_chat, {key})")
+            } else {
+                action == format!("clearm({key})")
+                    || action == "clearm(enter)"
+                    || action == "clearm(esc)"
+            };
+        if !permitted {
             return Err("invalid keyd fragment action".into());
         }
     }
@@ -665,62 +688,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn helper_selects_trusted_rvaiya_before_fallback_and_rejects_unsafe_clients() {
-        use std::os::unix::fs::symlink;
-        // Both clients, rvaiya only, fallback only, unsafe rvaiya, neither trusted.
-        for (rvaiya_mode, fallback_mode, expected) in [
-            (Some(0o755), Some(0o755), Some("/usr/bin/keyd.rvaiya")),
-            (Some(0o755), None, Some("/usr/bin/keyd.rvaiya")),
-            (None, Some(0o755), Some("/usr/bin/keyd")),
-            (Some(0o777), Some(0o755), Some("/usr/bin/keyd")),
-            (Some(0o644), Some(0o777), None),
-            (None, None, None),
+    fn helper_selects_only_the_managed_client_and_never_falls_back() {
+        assert_eq!(
+            select_keyd_client_with(|path| path == Path::new(crate::managed_keyd::BINARY_PATH))
+                .unwrap(),
+            crate::managed_keyd::BINARY_PATH
+        );
+        assert!(select_keyd_client_with(
+            |path| path == Path::new("/usr/bin/keyd") || path == Path::new("/usr/bin/keyd.rvaiya")
+        )
+        .is_err());
+        assert!(select_keyd_client_with(|_| false).is_err());
+    }
+}
+
+#[cfg(test)]
+mod routing_validation_tests {
+    use super::*;
+    #[test]
+    fn generated_priority_fragment_is_accepted_but_arbitrary_actions_are_not() {
+        let keys = ["tab", "f3", "b", "enter", "esc"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert!(validate_fragment("[mcsr_chat]\ntab = tab\nb = b\nenter = clearm(enter)\nesc = clearm(esc)\n\n[mcsr_f3]\ntab = layerk(mcsr_f3, f3)\nf3 = layerk(mcsr_f3, f3)\nb = b\n", &keys).is_ok());
+        for fragment in [
+            "[mcsr_chat]\nb = b\n[mcsr_f3]\nb = command(evil)\n",
+            "[mcsr_chat]\nb = b\n[main]\nb = b\n",
+            "[mcsr_chat]\nb = b\n[mcsr_f3]\nf3 = layerk(other, f3)\n",
+            "[mcsr_chat]\nb = b\n[mcsr_f3]\nb = b\nb = b\n",
+            "[mcsr_chat]\nb = b\n[mcsr_f3]\nb = b\n[mcsr_f3]\nb = b\n",
         ] {
-            let temp = tempfile::tempdir().unwrap();
-            let bin = temp.path().join("usr/bin");
-            fs::create_dir_all(&bin).unwrap();
-            for directory in [
-                temp.path().to_path_buf(),
-                temp.path().join("usr"),
-                bin.clone(),
-            ] {
-                fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).unwrap();
-            }
-            let fs_adapter = HelperFilesystem::sandbox(
-                temp.path().join("etc/keyd"),
-                temp.path().join("backups"),
-                temp.path().join("helper"),
-                temp.path().to_path_buf(),
-                unsafe { libc::geteuid() },
-            );
-            for (name, mode) in [("keyd.rvaiya", rvaiya_mode), ("keyd", fallback_mode)] {
-                if let Some(mode) = mode {
-                    let path = bin.join(name);
-                    fs::write(&path, b"test executable").unwrap();
-                    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
-                }
-            }
-            let select = || {
-                select_keyd_client_with(|path| {
-                    fs_adapter
-                        .verify_file(
-                            &temp.path().join(path.strip_prefix("/").unwrap()),
-                            true,
-                            false,
-                        )
-                        .is_ok()
-                })
-            };
-            assert_eq!(select().ok(), expected);
-            // Even a symlink to the safe fallback must not qualify as rvaiya.
-            if fallback_mode == Some(0o755) {
-                let rvaiya = bin.join("keyd.rvaiya");
-                if rvaiya.exists() {
-                    fs::remove_file(&rvaiya).unwrap();
-                }
-                symlink(bin.join("keyd"), rvaiya).unwrap();
-                assert_eq!(select().unwrap(), "/usr/bin/keyd");
-            }
+            assert!(validate_fragment(fragment, &keys).is_err(), "{fragment}");
         }
     }
 }

@@ -846,3 +846,99 @@ async fn live_runtime_finishes_deferred_apply_after_instance_closes() {
     .unwrap();
     runtime.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn saved_edits_cannot_change_an_applied_resize() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = config(&temp);
+    write_eye_profile(&config);
+    let state = mcsr_toolkit::paths::ensure_state(&config.data_home).unwrap();
+    let mut active: mcsr_toolkit::profile::Profile =
+        serde_json::from_slice(&fs::read(state.join("profile.json")).unwrap()).unwrap();
+    active.presets[0].width = 800;
+    active.presets[0].height = 600;
+    active.presets[0].eye_zoom = false;
+    mcsr_toolkit::paths::atomic_replace(
+        &state.join("active-profile.json"),
+        &serde_json::to_vec(&active).unwrap(),
+        true,
+    )
+    .unwrap();
+    let mut runtime = ServiceRuntime::start_with_runner(
+        config.clone(),
+        Arc::new(FakeGnome),
+        Arc::new(FakeMaccel::default()),
+        Arc::new(FakeKeyd::default()),
+    )
+    .await
+    .unwrap();
+    write_focus(&config, "Minecraft", false);
+    wait_focus(&runtime, true).await;
+    let result = runtime.handle_preset("eye", false).await.unwrap();
+    assert_eq!((result.width, result.height), (800, 600));
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn unchanged_reconciliation_preserves_activation_acknowledgement() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = config(&temp);
+    config.enable_live_keyd = true;
+    let game = config.managed_dir.join("instances/one/minecraft");
+    fs::create_dir_all(&game).unwrap();
+    fs::write(
+        game.parent().unwrap().join("instance.json"),
+        r#"{"id":"one"}"#,
+    )
+    .unwrap();
+    fs::write(game.join("options.txt"), "key_key.back:key.keyboard.s\n").unwrap();
+    struct AppliedKeyd;
+    impl mcsr_toolkit::apply::KeydAdapter for AppliedKeyd {
+        fn install(&self, _: &mcsr_toolkit::profile::Profile) -> Result<(), String> {
+            Ok(())
+        }
+        fn checkpoint(&self) -> Result<Vec<String>, String> {
+            Ok(vec![])
+        }
+        fn restore_to(&self, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+        fn rollback(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let state = mcsr_toolkit::paths::ensure_state(&config.data_home).unwrap();
+    let active = mcsr_toolkit::profile::Profile {
+        launcher_root: Some(config.managed_dir.to_string_lossy().into()),
+        ..Default::default()
+    };
+    mcsr_toolkit::apply::ApplyCoordinator::new(&config.managed_dir, &config.data_home, vec![])
+        .unwrap()
+        .apply(&active, &AppliedKeyd)
+        .unwrap();
+    mcsr_toolkit::paths::atomic_replace(
+        &state.join("active-profile.json"),
+        &serde_json::to_vec(&active).unwrap(),
+        true,
+    )
+    .unwrap();
+    let mut runtime = ServiceRuntime::start_with_runner(
+        config.clone(),
+        Arc::new(FakeGnome),
+        Arc::new(FakeMaccel::default()),
+        Arc::new(FakeKeyd::default()),
+    )
+    .await
+    .unwrap();
+    // The first reconciliation interval ticks immediately, republishing the same profile.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    write_focus(&config, "Minecraft", false);
+    wait_focus(&runtime, true).await;
+    tokio::time::sleep(Duration::from_millis(550)).await;
+    let status = runtime.focus_status();
+    runtime.shutdown().await.unwrap();
+    assert!(
+        status["events"]["activate"].as_u64().unwrap() > 0,
+        "{status}"
+    );
+}

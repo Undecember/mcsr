@@ -226,6 +226,12 @@ pub trait GnomePeer: Send + Sync {
         &self,
         json: String,
     ) -> impl std::future::Future<Output = Result<(), GnomeError>> + Send;
+    fn prepare_routing(
+        &self,
+        _generation: String,
+    ) -> impl std::future::Future<Output = Result<(), GnomeError>> + Send {
+        async { Ok(()) }
+    }
     fn resize_focused(
         &self,
         width: u32,
@@ -237,6 +243,7 @@ pub struct GnomeBridge<P: GnomePeer> {
     peer: Arc<P>,
     focus: SharedFocus,
     configured: Mutex<HashSet<String>>,
+    configuring: Mutex<()>,
 }
 impl<P: GnomePeer> GnomeBridge<P> {
     pub fn new(peer: Arc<P>, focus: SharedFocus) -> Self {
@@ -244,18 +251,35 @@ impl<P: GnomePeer> GnomeBridge<P> {
             peer,
             focus,
             configured: Mutex::new(HashSet::new()),
+            configuring: Mutex::new(()),
         }
     }
 
     pub async fn configure_presets(&self, profile: &Profile) -> Result<(), GnomeError> {
+        self.configure_inner(profile, None).await
+    }
+    pub async fn configure_presets_with_fence(
+        &self,
+        profile: &Profile,
+        emit: impl Fn() -> Result<(), String> + Send + Sync,
+    ) -> Result<(), GnomeError> {
+        self.configure_inner(profile, Some(&emit)).await
+    }
+    async fn configure_inner(
+        &self,
+        profile: &Profile,
+        fence: Option<&(dyn Fn() -> Result<(), String> + Send + Sync)>,
+    ) -> Result<(), GnomeError> {
+        let _configuration = self.configuring.lock().await;
         if profile.presets.len() > 8 {
             return Err(GnomeError("too many presets".into()));
         }
+        let plan = crate::routing::RoutingPlan::compile(profile).map_err(GnomeError)?;
         let mut configured = Vec::new();
         let mut ids = HashSet::new();
         let mut shortcuts = HashSet::new();
         let mut eye = None;
-        for preset in &profile.presets {
+        for (preset, signal) in profile.presets.iter().zip(&plan.signals) {
             if !(100..=16384).contains(&preset.width) || !(100..=16384).contains(&preset.height) {
                 return Err(GnomeError("invalid preset size".into()));
             }
@@ -281,7 +305,7 @@ impl<P: GnomePeer> GnomeBridge<P> {
             }
             configured.push(PresetConfig {
                 id: &preset.id,
-                accelerator: translated,
+                accelerator: signal.accelerator.clone(),
                 eye_zoom: preset.eye_zoom,
             });
         }
@@ -291,14 +315,63 @@ impl<P: GnomePeer> GnomeBridge<P> {
                 "shifted eye zoom conflicts with another preset".into(),
             ));
         }
-        let json = serde_json::to_string(&configured).map_err(|e| GnomeError(e.to_string()))?;
-        bounded(METHOD_TIMEOUT, self.peer.configure_presets(json)).await?;
+        let activation = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let json = serde_json::to_string(&PresetConfiguration {
+            protocol: "mcsr-keyd-v1",
+            generation: &activation,
+            profile_generation: &plan.generation,
+            drain: fence.is_some(),
+            presets: configured,
+        })
+        .map_err(|e| GnomeError(e.to_string()))?;
+        // A failed or timed-out replacement must not keep accepting an old plan.
+        self.configured.lock().await.clear();
+        let configure = async {
+            if let Some(emit) = fence {
+                bounded(
+                    METHOD_TIMEOUT,
+                    self.peer.prepare_routing(activation.clone()),
+                )
+                .await?;
+                emit().map_err(GnomeError)?;
+            }
+            loop {
+                match self.peer.configure_presets(json.clone()).await {
+                    Err(error)
+                        if fence.is_some() && error.0.contains("routing input drain pending") =>
+                    {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    result => return result,
+                }
+            }
+        };
+        if let Err(error) = bounded(METHOD_TIMEOUT, configure).await {
+            if fence.is_some() {
+                let _ = bounded(METHOD_TIMEOUT, self.peer.prepare_routing(String::new())).await;
+            }
+            return Err(error);
+        }
         *self.configured.lock().await = profile
             .presets
             .iter()
-            .map(|preset| preset.id.clone())
+            .map(|preset| format!("{}:{}", activation, preset.id))
             .collect();
         Ok(())
+    }
+
+    pub async fn preset_signal_id(&self, id: &str) -> Result<String, GnomeError> {
+        self.configured
+            .lock()
+            .await
+            .iter()
+            .find(|wire| wire.split_once(':').is_some_and(|(_, value)| value == id))
+            .cloned()
+            .ok_or_else(|| GnomeError("preset routing is not configured".into()))
     }
 
     pub async fn accept_preset_signal(&self, id: &str, _shifted: bool) -> Result<bool, GnomeError> {
@@ -344,6 +417,15 @@ impl<P: GnomePeer> GnomeBridge<P> {
         }
         Ok(actual)
     }
+}
+
+#[derive(Serialize)]
+struct PresetConfiguration<'a> {
+    protocol: &'static str,
+    generation: &'a str,
+    profile_generation: &'a str,
+    drain: bool,
+    presets: Vec<PresetConfig<'a>>,
 }
 
 #[derive(Serialize)]
@@ -505,6 +587,16 @@ impl GnomePeer for SessionPeer {
             self.proxy()
                 .await?
                 .call("GetFocus", &())
+                .await
+                .map_err(bus_error)
+        })
+        .await
+    }
+    async fn prepare_routing(&self, generation: String) -> Result<(), GnomeError> {
+        bounded(METHOD_TIMEOUT, async {
+            self.proxy()
+                .await?
+                .call("PrepareRouting", &(generation,))
                 .await
                 .map_err(bus_error)
         })
