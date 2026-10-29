@@ -2,7 +2,7 @@
 
 ## v0.1.0-beta.3 candidate — 2026-10-29
 
-Status: **release-ready beta candidate; local integration approved, publication pending**. Preparation is on `release/v0.1.0-beta.3`, forked from reviewed `dev` commit `e3090238f9317927dfab175bef3cce1c896f6be8`. At release-ready approval, the published release remains beta.2. Cargo package version remains `0.1.0`, following the existing beta tag/hash convention. No stable-release acceptance is claimed.
+Status: **[`v0.1.0-beta.3` published as a GitHub prerelease](https://github.com/Undecember/mcsr/releases/tag/v0.1.0-beta.3)** at `2026-10-29T08:41:42Z`. The release-only `main` commit is `28f0d15c76afcde8fe9d3cccc0d387a6576e6483`, with the matching annotated release tag. Preparation is on `release/v0.1.0-beta.3`, forked from reviewed `dev` commit `e3090238f9317927dfab175bef3cce1c896f6be8`. At release-ready approval, the published release remains beta.2. Cargo package version remains `0.1.0`, following the existing beta tag/hash convention. No stable-release acceptance is claimed.
 
 ### Scope and evidence
 
@@ -21,9 +21,10 @@ The fix uses the existing trusted helper clear/restart and daemon health checks 
 - [x] Complete independent review of these release notes, checklist, candidate identity, and retained live limitations: **PASS**, no material findings. The staged checksum, byte count, ELF dependencies, and GLIBC requirement were independently verified.
 - [x] With release integration approval, fast-forward local `main` from beta.1 (`d0f6974`) to the published beta.2 `origin/main` (`105a32b`). Remote state was rechecked and the resulting local `main` matches the beta.2 tag.
 - [x] Obtain explicit confirmation that the release is ready before squash-merging into release-only `main` and tagging the resulting release commit. The operator approved local release integration on 2026-10-29.
-- [ ] Obtain authorization to push/publish the reviewed prerelease and the exact two staged assets.
-- [ ] Verify the exact public downloads against the staged executable and checksum after publication.
-- [ ] Obtain approval to synchronize tagged `main` back into `dev` using `git merge --no-ff`; verify before release-branch/worktree cleanup.
+- [x] Obtain authorization to push/publish the reviewed prerelease and the exact two staged assets. Published with exactly `mcsr-toolkit` and `mcsr-toolkit.sha256`.
+- [x] Verify the exact public downloads against the staged executable and checksum after publication. Both unauthenticated downloads are byte-identical to the staged files, and the downloaded checksum passes.
+- [x] Obtain approval to synchronize tagged `main` back into `dev` using `git merge --no-ff`. The merge result matches the tagged tree and the complete serial test suite passed.
+- [x] Confirm both release-commit CI runs pass before release-branch/worktree cleanup. Both the tag and main push runs passed.
 
 ### Candidate verification
 
@@ -39,6 +40,13 @@ Completed locally using Ubuntu 26.04.1 LTS, Linux 7.0.0-38-generic, Rust/Cargo 1
 - `ldd` resolved every dependency. `readelf -d` lists `libgcc_s.so.1`, `libm.so.6`, `libc.so.6`, and `ld-linux-x86-64.so.2`; no Python runtime library is linked. Highest required GLIBC symbol version is `2.39`. Cross-version runtime compatibility was not tested.
 
 Build/test commands ran from the release worktree with `CARGO_TARGET_DIR` pointing to the primary checkout's `target/` cache. Staged release files are copies of that verified build. Do not rebuild or replace them without updating the checksum and recorded identity. Local candidate verification does not establish future public download identity or CI status for a future release commit.
+
+### Publication verification
+
+- Squash release commit `28f0d15c76afcde8fe9d3cccc0d387a6576e6483` has parent beta.2 commit `105a32b`; annotated tag `v0.1.0-beta.3` resolves to that release commit. `main` and the tag were pushed atomically.
+- GitHub prerelease published at `2026-10-29T08:41:42Z` with exactly two assets: executable 12,730,704 bytes and checksum 79 bytes.
+- Public assets were downloaded without authentication at `2026-10-29T08:42:34.219788+00:00`. Both files are byte-identical to the staged candidate; downloaded `sha256sum --check mcsr-toolkit.sha256` passed, preserving executable SHA256 `98154ab5152ab73029bf4f9ac753514870abed6b6b4ad6803453cfadd20afc14`.
+- Release commit CI: [tag run 40843830425](https://github.com/Undecember/mcsr/actions/runs/40843830425) and [main run 40843830238](https://github.com/Undecember/mcsr/actions/runs/40843830238) both completed successfully for the exact release commit before cleanup.
 
 ### Remaining live gates
 
