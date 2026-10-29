@@ -1,5 +1,45 @@
 "use strict";
 
+// Minecraft Java 1.16 defaults. IDs are options.txt keys, not physical keys.
+const MINECRAFT_CONTROLS = [
+  ['forward', 'W', 'Move forward'],
+  ['back', 'S', 'Move backward'],
+  ['left', 'A', 'Strafe left'],
+  ['right', 'D', 'Strafe right'],
+  ['jump', 'Space', 'Jump'],
+  ['sneak', 'Left Shift', 'Sneak'],
+  ['sprint', 'Left Control', 'Sprint'],
+  ['attack', 'Left Mouse', 'Attack / Destroy'],
+  ['use', 'Right Mouse', 'Use item / Place block'],
+  ['pickItem', 'Middle Mouse', 'Pick block'],
+  ['inventory', 'E', 'Open / Close inventory'],
+  ['drop', 'Q', 'Drop selected item'],
+  ['swapOffhand', 'F', 'Swap item with offhand'],
+  ...Array.from({length: 9}, (_, index) =>
+    [`hotbar.${index + 1}`, String(index + 1), `Hotbar slot ${index + 1}`]),
+  ['chat', 'T', 'Open chat'],
+  ['command', '/', 'Open command'],
+  ['playerlist', 'Tab', 'List players'],
+  ['advancements', 'L', 'Advancements'],
+  ['screenshot', 'F2', 'Take screenshot'],
+  ['togglePerspective', 'F5', 'Toggle perspective'],
+  ['fullscreen', 'F11', 'Toggle fullscreen'],
+  ['saveToolbarActivator', 'C', 'Save hotbar'],
+  ['loadToolbarActivator', 'X', 'Load hotbar'],
+  ['smoothCamera', 'Unbound', 'Toggle cinematic camera'],
+  ['spectatorOutlines', 'Unbound', 'Highlight players (spectators)']
+].map(([name, key, action]) => ({id: `key_key.${name}`, key, action}));
+
+function findMinecraftControls(query) {
+  const normalize = value => value.toLowerCase().replace(/[^a-z0-9/]/g, '');
+  const term = normalize(query.trim());
+  if (!term) return MINECRAFT_CONTROLS;
+  const exactKey = MINECRAFT_CONTROLS.filter(control => normalize(control.key) === term);
+  if (exactKey.length) return exactKey;
+  return MINECRAFT_CONTROLS.filter(control =>
+    normalize(control.key).includes(term) || normalize(control.action).includes(term));
+}
+
 function profileFromRows(rows) {
   const result = {};
   for (const [rawSource, rawTarget] of rows) {
@@ -20,7 +60,7 @@ function canApply(status, preview, savedRevision, currentRevision, busy) {
     preview.instances.every(item => item.status === 'ready' || item.status === 'unchanged'));
 }
 
-if (typeof module !== 'undefined') module.exports = { canApply, profileFromRows };
+if (typeof module !== 'undefined') module.exports = { canApply, profileFromRows, findMinecraftControls };
 
 if (typeof document !== 'undefined') {
   const $ = id => document.getElementById(id);
@@ -29,7 +69,7 @@ if (typeof document !== 'undefined') {
     revision: 0, savedRevision: -1, busy: false
   };
   const fields = {
-    controls: ['Action ID', 'Physical key'],
+    controls: ['Minecraft control', 'Physical key'],
     crafting: ['Physical key', 'Emitted key'],
     ninjabrain: ['Physical key', 'Ninjabrain shortcut']
   };
@@ -72,9 +112,74 @@ if (typeof document !== 'undefined') {
     return wrapper;
   }
 
+  function controlPicker(source) {
+    const wrapper = element('div', 'control-picker');
+    const searchLabel = rowInput('Search default key or action');
+    const search = searchLabel.querySelector('input');
+    search.type = 'search';
+    search.dataset.field = 'control-search';
+    const label = element('label');
+    label.append(element('span', 'sr-only', 'Minecraft control (default key — action)'));
+    const select = element('select');
+    select.setAttribute('aria-label', 'Minecraft control (default key — action)');
+    label.append(select);
+    const customLabel = rowInput('Custom control ID', source);
+    customLabel.className = 'control-custom';
+    const custom = customLabel.querySelector('input');
+    custom.dataset.field = 'custom-control';
+    const known = MINECRAFT_CONTROLS.some(control => control.id === source);
+    let selected = known || !source ? source : '__custom__';
+    if (known) custom.value = '';
+
+    function showOptions() {
+      const matches = findMinecraftControls(search.value);
+      const options = [...matches];
+      const current = MINECRAFT_CONTROLS.find(control => control.id === selected);
+      // Filtering must not silently discard a selection from a loaded profile.
+      if (current && !options.includes(current)) options.unshift(current);
+      select.replaceChildren();
+      const blank = element('option', '', 'Select a control…');
+      blank.value = '';
+      select.append(blank);
+      for (const control of options) {
+        const option = element('option', '', `${control.key} — ${control.action}`);
+        option.value = control.id;
+        select.append(option);
+      }
+      if (!matches.length) {
+        const empty = element('option', '', 'No matching controls');
+        empty.disabled = true;
+        empty.value = '__no_matches__';
+        select.append(empty);
+      }
+      const other = element('option', '', 'Custom control ID…');
+      other.value = '__custom__';
+      select.append(other);
+      select.value = selected;
+      customLabel.hidden = selected !== '__custom__';
+      custom.disabled = customLabel.hidden;
+    }
+
+    search.addEventListener('input', event => {
+      event.stopPropagation();
+      showOptions();
+    });
+    // Native selects also emit input; handle the selection once on change.
+    select.addEventListener('input', event => event.stopPropagation());
+    select.addEventListener('change', () => {
+      selected = select.value;
+      showOptions();
+      changed();
+    });
+    showOptions();
+    wrapper.append(searchLabel, label, customLabel);
+    return wrapper;
+  }
+
   function addMappingRow(section, source = '', target = '', silent = false) {
     const row = element('div', 'mapping-row');
-    row.append(rowInput(fields[section][0], source), rowInput(fields[section][1], target));
+    row.append(section === 'controls' ? controlPicker(source) : rowInput(fields[section][0], source),
+      rowInput(fields[section][1], target));
     const remove = element('button', 'remove', 'Remove');
     remove.type = 'button';
     remove.setAttribute('aria-label', `Remove ${section} row`);
@@ -115,8 +220,13 @@ if (typeof document !== 'undefined') {
   }
 
   function readRows(section) {
-    return [...$(`${section}-rows`).children].map(row =>
-      [...row.querySelectorAll('input')].map(input => input.value));
+    return [...$(`${section}-rows`).children].map(row => {
+      if (section !== 'controls') return [...row.querySelectorAll('input')].map(input => input.value);
+      const select = row.querySelector('select');
+      const source = select.value === '__custom__'
+        ? row.querySelector('[data-field="custom-control"]').value : select.value;
+      return [source, row.children[1].querySelector('input').value];
+    });
   }
 
   function readProfile() {

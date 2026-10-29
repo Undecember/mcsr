@@ -20,10 +20,10 @@ class Node {
   replaceChildren(...nodes) { this.children = []; this.text = ''; this.append(...nodes); }
   setAttribute() {}
   addEventListener(name, callback) { this.listeners.set(name, callback); }
-  emit(name) { return this.listeners.get(name)?.({preventDefault() {}, target: this}); }
+  emit(name) { return this.listeners.get(name)?.({preventDefault() {}, stopPropagation() {}, target: this}); }
   remove() { this.parent.children = this.parent.children.filter(node => node !== this); }
   querySelectorAll(selector) {
-    const matches = node => selector === 'input' ? node.tag === 'input'
+    const matches = node => ['input', 'select', 'option'].includes(selector) ? node.tag === selector
       : node.dataset.field === selector.match(/^\[data-field="(.*)"\]$/)?.[1];
     return this.children.flatMap(node => [ ...(matches(node) ? [node] : []),
       ...node.querySelectorAll(selector) ]);
@@ -37,7 +37,7 @@ const profile = target => ({controls: {}, crafting: {s: target}, ninjabrain: {},
   presets: [], launcher_root: '/launcher'});
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function browser({deferProfile = false} = {}) {
+async function browser({deferProfile = false, initialProfile} = {}) {
   const ids = new Map();
   const chats = new Map();
   const get = id => {
@@ -56,7 +56,7 @@ async function browser({deferProfile = false} = {}) {
     }
   };
   const calls = [];
-  let canonical = profile('j');
+  let canonical = initialProfile || profile('j');
   let jobPath = '';
   let profileGets = 0;
   let resolveProfile;
@@ -120,5 +120,56 @@ async function browser({deferProfile = false} = {}) {
   assert.equal(racing.craftingTarget().value, 'h', 'in-flight profile refresh must preserve new edits');
   await racing.get('preview-profile').emit('click');
   assert.equal(racing.get('apply-profile').disabled, true);
-  console.log('UI restore profile and draft race checks passed');
+  // Catch dropping IDs during picker serialization, or failing to invalidate a preview.
+  const controls = await browser({initialProfile: {...profile('j'), controls: {
+    'key_key.hotbar.1': 'z', 'key_mod.toggle': 'v'
+  }}});
+  const controlRows = () => controls.get('controls-rows').children;
+  const picker = controlRows()[0].querySelector('select');
+  assert.ok(picker, 'Minecraft controls must use a picker');
+  assert.equal(picker.value, 'key_key.hotbar.1');
+  assert.match(picker.querySelectorAll('option').find(option => option.value === picker.value).textContent,
+    /1 — Hotbar slot 1/);
+  assert.equal(controlRows()[1].querySelector('select').value, '__custom__');
+  assert.equal(controlRows()[1].querySelector('[data-field="custom-control"]').value, 'key_mod.toggle');
+  await controls.get('save-profile').emit('click');
+  const saves = () => controls.calls.filter(call => call.path === '/api/profile' && call.method === 'PUT');
+  assert.deepEqual(saves().at(-1).data.controls, {'key_key.hotbar.1': 'z', 'key_mod.toggle': 'v'});
+  await controls.get('preview-profile').emit('click');
+  assert.equal(controls.get('apply-profile').disabled, false);
+  const search = controlRows()[0].querySelector('[data-field="control-search"]');
+  search.value = 'jump';
+  search.emit('input');
+  assert.equal(picker.value, 'key_key.hotbar.1', 'filtering must preserve the selected control');
+  assert.equal(controls.get('apply-profile').disabled, false, 'searching alone must preserve the preview');
+  assert.ok(picker.querySelectorAll('option').some(option => option.value === 'key_key.jump'));
+  assert.equal(picker.querySelectorAll('option').some(option => option.value === 'key_key.back'), false);
+  picker.value = 'key_key.jump';
+  picker.emit('change');
+  assert.equal(controls.get('apply-profile').disabled, true, 'selecting another control invalidates preview');
+  await controls.get('save-profile').emit('click');
+  assert.deepEqual(saves().at(-1).data.controls, {'key_key.jump': 'z', 'key_mod.toggle': 'v'});
+
+  picker.value = '__custom__';
+  picker.emit('change');
+  const custom = controlRows()[0].querySelector('[data-field="custom-control"]');
+  assert.equal(custom.disabled, false);
+  await controls.get('save-profile').emit('click');
+  assert.match(controls.get('notice').textContent, /Complete both fields/);
+  custom.value = 'key_mod.another';
+  await controls.get('save-profile').emit('click');
+  assert.deepEqual(saves().at(-1).data.controls, {'key_mod.another': 'z', 'key_mod.toggle': 'v'});
+  const reloaded = await browser({initialProfile: saves().at(-1).data});
+  assert.equal(reloaded.get('controls-rows').children[0].querySelector('[data-field="custom-control"]').value,
+    'key_mod.another');
+  custom.value = 'key_mod.toggle';
+  const beforeDuplicate = saves().length;
+  await controls.get('save-profile').emit('click');
+  assert.equal(saves().length, beforeDuplicate);
+  assert.match(controls.get('notice').textContent, /Duplicate source/);
+  picker.value = '';
+  picker.emit('change');
+  await controls.get('save-profile').emit('click');
+  assert.match(controls.get('notice').textContent, /Complete both fields/);
+  console.log('UI restore, draft race, control picker, and profile round-trip checks passed');
 })().catch(error => {console.error(error); process.exitCode = 1;});

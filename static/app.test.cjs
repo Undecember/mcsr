@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { canApply, profileFromRows } = require('./app.js');
+const { canApply, profileFromRows, findMinecraftControls } = require('./app.js');
 
 test('apply requires a saved, current preview with every instance ready or unchanged', () => {
   const safe = { instances: [{ instance_id: 'one', status: 'ready', detail: '' }] };
@@ -25,4 +25,23 @@ test('profile rows become API dictionaries without blank rows', () => {
 
 test('duplicate profile row keys are rejected before sending', () => {
   assert.throws(() => profileFromRows([['s', 'k'], ['s', 'j']]), /Duplicate source/);
+});
+
+// Catch confusing a default key with the stored Minecraft action or matching IDs only.
+test('control search finds Minecraft actions by default key or action name', () => {
+  assert.equal(typeof findMinecraftControls, 'function');
+  assert.deepEqual(findMinecraftControls(' W '), [
+    {id: 'key_key.forward', key: 'W', action: 'Move forward'}
+  ]);
+  assert.deepEqual(findMinecraftControls('hotbar slot 1'), [
+    {id: 'key_key.hotbar.1', key: '1', action: 'Hotbar slot 1'}
+  ]);
+  assert.equal(findMinecraftControls('1')[0].id, 'key_key.hotbar.1');
+  assert.equal(findMinecraftControls('space')[0].id, 'key_key.jump');
+  assert.equal(findMinecraftControls('right mouse')[0].id, 'key_key.use');
+  assert.equal(findMinecraftControls('unbound').some(control => control.id === 'key_key.smoothCamera'), true);
+  assert.equal(findMinecraftControls('SNEAK')[0].key, 'Left Shift');
+  assert.equal(findMinecraftControls('not a control').length, 0);
+  assert.equal(new Set(findMinecraftControls('').map(control => control.id)).size,
+    findMinecraftControls('').length);
 });
