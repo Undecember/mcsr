@@ -56,6 +56,15 @@ index cf901eb..0f6beec 100644
  	case IPC_LAYER_LISTEN:
  		add_listener(con);
  		break;
+@@ -447,7 +456,7 @@ static void handle_client(int con)
+ 		add_listener(con);
+ 		break;
+ 	case IPC_BIND:
+-		success = 0;
++		success = !configs && msg.sz == 5 && !memcmp(msg.data, "reset", 5);
+ 
+ 		if (msg.sz == sizeof(msg.data)) {
+ 			send_fail(con, "bind expression size exceeded");
 diff --git a/src/keyboard.c b/src/keyboard.c
 index 97797c3..a6b3e86 100644
 --- a/src/keyboard.c

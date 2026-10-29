@@ -1135,3 +1135,206 @@ fn restoring_repair_backup_preserves_mod_edits_between_applies() {
         .is_err());
     assert_eq!(fs::read(&config).unwrap(), external);
 }
+
+fn resize_profile() -> Profile {
+    parse_profile(
+        br#"{"presets":[{"id":"thin","width":300,"height":900,"shortcut":"b"}]}"#,
+        &KeySet::fallback(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn resize_only_windowed_changes_preview_apply_restore_and_reconcile() {
+    let f = Fixture::new();
+    let options = f.instance("one", b"fullscreen:true\r\n");
+    let json_before = br#"{ "fullscreen":{"enabled":true,"value":true}, "unrelated":42 }"#;
+    let json = standard_file(&options, "config/mcsr/standardsettings.json", json_before);
+    let legacy = standard_file(&options, "config/standardoptions.txt", b"fullscreen:true\r");
+    let c = f.coordinator(vec![]);
+    let keyd = FakeKeyd::default();
+    let p = resize_profile();
+    let preview = c.preview(&p).unwrap();
+    assert_eq!(preview.instances[0].status, "ready");
+    assert!(preview.instances[0].detail.contains("windowed"));
+    assert!(preview.mappings.iter().all(|m| m.action != "fullscreen"));
+    let report = c.apply(&p, &keyd).unwrap();
+    assert_eq!(fs::read(&options).unwrap(), b"fullscreen:false\r\n");
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&json).unwrap()).unwrap();
+    assert_eq!(value["fullscreen"]["value"], false);
+    assert_eq!(fs::read(&legacy).unwrap(), b"fullscreen:false\r");
+    assert!(c
+        .reconcile_new_instances(&p, &keyd)
+        .unwrap()
+        .backup_id
+        .is_none());
+    c.restore(report.backup_id.as_deref().unwrap(), &keyd)
+        .unwrap();
+    assert_eq!(fs::read(options).unwrap(), b"fullscreen:true\r\n");
+    assert_eq!(fs::read(json).unwrap(), json_before);
+    assert_eq!(fs::read(legacy).unwrap(), b"fullscreen:true\r");
+}
+
+#[test]
+fn windowed_changes_defer_running_instances_and_refuse_invalid_peer_atomically() {
+    let f = Fixture::new();
+    let one = f.instance("one", b"fullscreen:true\n");
+    let two = f.instance("two", b"fullscreen:true\n");
+    let p = resize_profile();
+    let keyd = FakeKeyd::default();
+    let report = f
+        .coordinator(vec![one.parent().unwrap().to_path_buf()])
+        .apply(&p, &keyd)
+        .unwrap();
+    assert_eq!(status(&report, "one"), "deferred");
+    assert_eq!(fs::read(&two).unwrap(), b"fullscreen:true\n");
+    fs::write(&two, b"fullscreen:bad\n").unwrap();
+    let report = f.coordinator(vec![]).apply(&p, &keyd).unwrap();
+    assert_eq!(status(&report, "one"), "blocked");
+    assert_eq!(status(&report, "two"), "failed");
+    assert_eq!(fs::read(one).unwrap(), b"fullscreen:true\n");
+}
+
+#[test]
+fn no_presets_preserves_fullscreen_and_removing_presets_does_not_enable_it() {
+    let f = Fixture::new();
+    let options = f.instance("one", b"fullscreen:true\n");
+    let c = f.coordinator(vec![]);
+    let keyd = FakeKeyd::default();
+    c.apply(&Profile::default(), &keyd).unwrap();
+    assert_eq!(fs::read(&options).unwrap(), b"fullscreen:true\n");
+    c.apply(&resize_profile(), &keyd).unwrap();
+    c.apply(&Profile::default(), &keyd).unwrap();
+    assert_eq!(fs::read(options).unwrap(), b"fullscreen:false\n");
+}
+
+#[test]
+fn historical_resize_backups_restore_fullscreen_true_without_replaying_new_policy() {
+    let f = Fixture::new();
+    let options = f.instance("one", b"fullscreen:true\nkey_key.back:key.keyboard.s\n");
+    let config = standard_file(
+        &options,
+        "config/mcsr/standardsettings.json",
+        br#"{"fullscreen":true}"#,
+    );
+    let keyd = FakeKeyd::default();
+    let c = f.coordinator(vec![]);
+    let first = c.apply(&profile("k"), &keyd).unwrap();
+    let second = c.apply(&profile("j"), &keyd).unwrap();
+    // These generations predate windowed management: add their resize metadata
+    // while retaining every exact content hash and control-state snapshot.
+    let presets = serde_json::to_value(resize_profile().presets).unwrap();
+    let first_path = f
+        .state()
+        .join("backups")
+        .join(first.backup_id.as_deref().unwrap())
+        .join("manifest.json");
+    let second_path = f
+        .state()
+        .join("backups")
+        .join(second.backup_id.as_deref().unwrap())
+        .join("manifest.json");
+    let lineage_path = f.state().join("lineage.json");
+    for (path, prior) in [
+        (&first_path, false),
+        (&second_path, true),
+        (&lineage_path, false),
+    ] {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        value["profile"]["presets"] = presets.clone();
+        if prior {
+            value["prior_history"]["profile"]["presets"] = presets.clone();
+        }
+        fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    let restored = c
+        .restore(second.backup_id.as_deref().unwrap(), &keyd)
+        .unwrap();
+    assert!(!restored.restored_profile.unwrap().presets.is_empty());
+    assert_eq!(
+        fs::read(&options).unwrap(),
+        b"fullscreen:true\nkey_key.back:key.keyboard.k\n"
+    );
+    assert_eq!(fs::read(&config).unwrap(), br#"{"fullscreen":true}"#);
+    c.restore(first.backup_id.as_deref().unwrap(), &keyd)
+        .unwrap();
+    assert_eq!(
+        fs::read(options).unwrap(),
+        b"fullscreen:true\nkey_key.back:key.keyboard.s\n"
+    );
+}
+
+#[test]
+fn windowed_publication_failure_rolls_back_exactly() {
+    let f = Fixture::new();
+    let options = f.instance("one", b"fullscreen:true\n");
+    let before = br#"{ "fullscreen":true }"#;
+    let config = standard_file(&options, "config/mcsr/standardsettings.json", before);
+    let c = f.coordinator(vec![]);
+    let keyd = FakeKeyd::default();
+    assert!(c
+        .apply_with_publish(&resize_profile(), &keyd, &|_| Err(
+            mcsr_toolkit::apply::ApplyError("publication failed".into())
+        ))
+        .is_err());
+    assert_eq!(fs::read(&options).unwrap(), b"fullscreen:true\n");
+    assert_eq!(fs::read(&config).unwrap(), before);
+    assert!(f.state().join("mutation.json").exists());
+}
+
+#[test]
+fn windowed_restore_refuses_mod_drift() {
+    let f = Fixture::new();
+    let options = f.instance("one", b"fullscreen:true\n");
+    let config = standard_file(
+        &options,
+        "config/mcsr/standardsettings.json",
+        br#"{"fullscreen":true}"#,
+    );
+    let c = f.coordinator(vec![]);
+    let keyd = FakeKeyd::default();
+    let report = c.apply(&resize_profile(), &keyd).unwrap();
+    fs::write(&config, br#"{"fullscreen":true}"#).unwrap();
+    assert!(c
+        .restore(report.backup_id.as_deref().unwrap(), &keyd)
+        .is_err());
+    assert_eq!(fs::read(options).unwrap(), b"fullscreen:false\n");
+}
+
+#[test]
+fn fullscreen_mod_only_change_is_visible_and_deferred_when_running() {
+    for running in [false, true] {
+        let f = Fixture::new();
+        let options = f.instance("one", b"fullscreen:false\n");
+        let config = standard_file(&options, "config/standardoptions.txt", b"fullscreen:true\n");
+        let cwds = if running {
+            vec![options.parent().unwrap().to_path_buf()]
+        } else {
+            vec![]
+        };
+        let c = f.coordinator(cwds);
+        let p = resize_profile();
+        let preview = c.preview(&p).unwrap();
+        assert_eq!(
+            preview.instances[0].status,
+            if running { "deferred" } else { "ready" }
+        );
+        assert!(preview.instances[0]
+            .detail
+            .contains("config/standardoptions.txt"));
+        assert!(!preview.instances[0].detail.contains("options.txt,"));
+        let keyd = FakeKeyd::default();
+        let report = c.apply(&p, &keyd).unwrap();
+        assert_eq!(fs::read(options).unwrap(), b"fullscreen:false\n");
+        if running {
+            assert!(report.backup_id.is_none());
+            assert_eq!(fs::read(config).unwrap(), b"fullscreen:true\n");
+        } else {
+            assert_eq!(fs::read(&config).unwrap(), b"fullscreen:false\n");
+            c.restore(report.backup_id.as_deref().unwrap(), &keyd)
+                .unwrap();
+            assert_eq!(fs::read(config).unwrap(), b"fullscreen:true\n");
+        }
+    }
+}

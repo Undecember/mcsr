@@ -1,0 +1,30 @@
+{
+  "feat-borderless-toggle-extension": {
+    "files": [
+      "extension/extension.js",
+      "tests/extension_harness.cjs"
+    ],
+    "patch_sha256": "be78fe2f5fe6a064b5b14bad69f288ee4c78cff113067ae44bf00050e68d1f22"
+  },
+  "feat-borderless-toggle-runtime": {
+    "files": [
+      "src/gnome.rs",
+      "src/runtime.rs",
+      "tests/rust_gnome.rs",
+      "tests/rust_sensitivity.rs",
+      "tests/rust_runtime.rs"
+    ],
+    "patch_sha256": "8f93252c85ee445ace6c072a468279caba8d1069882f28507cc79ea0dcdd2cc3"
+  },
+  "feat-borderless-toggle-settings": {
+    "files": [
+      "src/options.rs",
+      "src/standard_settings.rs",
+      "src/apply.rs",
+      "tests/rust_standard_settings.rs",
+      "tests/rust_apply.rs",
+      "tests/rust_api.rs"
+    ],
+    "patch_sha256": "9f18de6453648304adf4085595034231d652795804a2c1978890faa55eae3022"
+  }
+}

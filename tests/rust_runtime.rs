@@ -51,6 +51,13 @@ impl mcsr_toolkit::gnome::GnomePeer for FakeGnome {
     ) -> Result<(u32, u32), mcsr_toolkit::gnome::GnomeError> {
         Ok((width, height))
     }
+    async fn toggle_resize_focused(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Result<(u32, u32, bool), mcsr_toolkit::gnome::GnomeError> {
+        Ok((width, height, false))
+    }
 }
 
 #[derive(Default)]
@@ -99,7 +106,10 @@ fn write_focus(config: &RuntimeConfig, class: &str, modal: bool) {
     .unwrap();
 }
 
-async fn wait_focus(runtime: &ServiceRuntime<FakeGnome, FakeMaccel>, focused: bool) {
+async fn wait_focus<P: mcsr_toolkit::gnome::GnomePeer + 'static>(
+    runtime: &ServiceRuntime<P, FakeMaccel>,
+    focused: bool,
+) {
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if runtime.focus_status()["minecraft_focused"] == focused {
@@ -941,4 +951,83 @@ async fn unchanged_reconciliation_preserves_activation_acknowledgement() {
         status["events"]["activate"].as_u64().unwrap() > 0,
         "{status}"
     );
+}
+
+#[tokio::test]
+async fn status_tracks_preset_full_size_and_focus_invalidation() {
+    use mcsr_toolkit::gnome::{GnomeError, GnomePeer};
+    struct ToggleGnome(Mutex<bool>);
+    impl GnomePeer for ToggleGnome {
+        async fn get_focus(&self) -> Result<(String, String, u32, u32, bool), GnomeError> {
+            Ok(("Minecraft".into(), "Game".into(), 800, 600, false))
+        }
+        async fn configure_presets(&self, _: String) -> Result<(), GnomeError> {
+            Ok(())
+        }
+        async fn resize_focused(&self, w: u32, h: u32) -> Result<(u32, u32), GnomeError> {
+            Ok((w, h))
+        }
+        async fn toggle_resize_focused(
+            &self,
+            w: u32,
+            h: u32,
+        ) -> Result<(u32, u32, bool), GnomeError> {
+            let mut full = self.0.lock().unwrap();
+            let reply = if *full {
+                (1920, 1080, true)
+            } else {
+                (w, h, false)
+            };
+            *full = !*full;
+            Ok(reply)
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let config = config(&temp);
+    let state = mcsr_toolkit::paths::ensure_state(&config.data_home).unwrap();
+    let mut profile = mcsr_toolkit::profile::Profile::default();
+    profile.presets.push(mcsr_toolkit::profile::ResizePreset {
+        id: "normal".into(),
+        width: 800,
+        height: 600,
+        shortcut: "f6".into(),
+        eye_zoom: false,
+    });
+    fs::write(
+        state.join("profile.json"),
+        serde_json::to_vec(&profile).unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(
+        state.join("profile.json"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let mut runtime = ServiceRuntime::start_with_runner(
+        config.clone(),
+        Arc::new(ToggleGnome(Mutex::new(false))),
+        Arc::new(FakeMaccel::default()),
+        Arc::new(FakeKeyd::default()),
+    )
+    .await
+    .unwrap();
+    assert!(runtime.focus_status()["window_mode"].is_null());
+    write_focus(&config, "Minecraft", false);
+    wait_focus(&runtime, true).await;
+    runtime.handle_preset("normal", false).await.unwrap();
+    assert_eq!(runtime.focus_status()["window_mode"], "preset");
+    assert_eq!(runtime.focus_status()["active_preset"], "normal");
+    runtime.handle_preset("normal", false).await.unwrap();
+    assert_eq!(runtime.focus_status()["window_mode"], "full_size");
+    assert!(runtime.focus_status()["active_preset"].is_null());
+    runtime.handle_preset("normal", false).await.unwrap();
+    assert_eq!(runtime.focus_status()["window_mode"], "preset");
+    assert_eq!(runtime.focus_status()["active_preset"], "normal");
+    write_focus(&config, "Terminal", false);
+    wait_focus(&runtime, false).await;
+    write_focus(&config, "Minecraft", false);
+    wait_focus(&runtime, true).await;
+    assert!(runtime.focus_status()["window_mode"].is_null());
+    assert!(runtime.focus_status()["active_preset"].is_null());
+    runtime.shutdown().await.unwrap();
 }

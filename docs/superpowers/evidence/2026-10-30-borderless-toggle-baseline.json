@@ -1,0 +1,19 @@
+{
+  "baseline": "5ae4c41c7f6660aac6f171252f017e34ad1778d3",
+  "startup_patch_sha256": "eee06896ff7f3660d11509d854b69298f172baad679f57d4a502614c9ad5035c",
+  "startup_patch_files": [
+    "src/keyd.rs",
+    "src/keyd_helper.rs",
+    "tests/rust_keyd_helper.rs",
+    "packaging/keyd/mcsr.patch",
+    "packaging/keyd/test.py",
+    "packaging/keyd/README.md"
+  ],
+  "startup_ipc_fixture_sha256": "d3880dcb4a9f5896ead2507a18d023e16bba1b9f8355be44a7925b47cc9704af",
+  "worktrees": [
+    "feat-borderless-full-size-toggle",
+    "feat-borderless-toggle-extension",
+    "feat-borderless-toggle-runtime",
+    "feat-borderless-toggle-settings"
+  ]
+}

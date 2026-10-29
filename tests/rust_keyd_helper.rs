@@ -57,6 +57,11 @@ struct FakeSystem {
     restart_count: usize,
     slow_health_at: Option<usize>,
     health_count: usize,
+    initial_errors: usize,
+    fail_health_at: Option<usize>,
+    error_health_at: Option<usize>,
+    probe_delay: Duration,
+    budgets: Vec<Duration>,
     keys: Option<String>,
 }
 impl HelperSystem for FakeSystem {
@@ -75,14 +80,27 @@ impl HelperSystem for FakeSystem {
             }
             "is-active" => {
                 self.health_count += 1;
+                self.now += self.probe_delay;
+                if self.health_count <= self.initial_errors
+                    || self.error_health_at == Some(self.health_count)
+                {
+                    return Err("IPC connection unavailable".into());
+                }
                 if self.slow_health_at == Some(self.health_count) {
                     self.now += Duration::from_millis(600);
                 }
-                Ok(!self.fail_health)
+                Ok(!self.fail_health && self.fail_health_at != Some(self.health_count))
             }
             "stop" => Ok(!self.fail_stop),
             _ => panic!("unexpected systemctl action"),
         }
+    }
+    fn readiness(&mut self, budget: Duration) -> Result<bool, String> {
+        self.budgets.push(budget);
+        if budget.is_zero() {
+            return Err("readiness budget exhausted".into());
+        }
+        self.systemctl("is-active")
     }
     fn now(&self) -> Duration {
         self.now
@@ -206,6 +224,9 @@ fn concurrent_helper_invocation_is_refused_before_service_mutation() {
                 self.entered.send(()).unwrap();
                 self.release.recv().unwrap();
             }
+            Ok(true)
+        }
+        fn readiness(&mut self, _budget: Duration) -> Result<bool, String> {
             Ok(true)
         }
         fn now(&self) -> Duration {
@@ -664,4 +685,111 @@ fn health_check_is_bounded_and_stops_on_gap() {
             .contains("stability")
     );
     assert_eq!(gap.calls.last(), Some(&"stop"));
+}
+
+#[test]
+fn clear_retries_initial_ipc_errors_then_requires_stable_readiness() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem {
+        initial_errors: 2,
+        ..Default::default()
+    };
+    let result = dispatch(&["privileged", "keyd", "clear"], b"", &s.fs, &mut sys);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(sys.now >= Duration::from_millis(700));
+    assert!(!sys.calls.contains(&"stop"));
+}
+
+#[test]
+fn readiness_timeout_preserves_last_ipc_error_and_stop_uncertainty() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem {
+        initial_errors: usize::MAX,
+        fail_stop: true,
+        ..Default::default()
+    };
+    let error = dispatch(&["privileged", "keyd", "clear"], b"", &s.fs, &mut sys).unwrap_err();
+    assert!(error.contains("timed out"), "{error}");
+    assert!(error.contains("IPC connection unavailable"), "{error}");
+    assert!(error.contains("input state unsafe"), "{error}");
+    assert_eq!(sys.now, Duration::from_secs(5));
+}
+
+#[test]
+fn initial_probe_finishing_after_deadline_is_rejected() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem {
+        probe_delay: Duration::from_millis(5001),
+        ..Default::default()
+    };
+    assert!(
+        dispatch(&["privileged", "keyd", "clear"], b"", &s.fs, &mut sys)
+            .unwrap_err()
+            .contains("timed out")
+    );
+    assert_eq!(sys.calls.last(), Some(&"stop"));
+}
+
+#[test]
+fn readiness_loss_during_stability_stops_immediately() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem {
+        fail_health_at: Some(2),
+        ..Default::default()
+    };
+    assert!(
+        dispatch(&["privileged", "keyd", "clear"], b"", &s.fs, &mut sys)
+            .unwrap_err()
+            .contains("stability")
+    );
+    assert_eq!(sys.health_count, 2);
+    assert_eq!(sys.calls.last(), Some(&"stop"));
+}
+
+#[test]
+fn polling_passes_only_remaining_initial_and_stability_budget() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem {
+        initial_errors: 1,
+        probe_delay: Duration::from_millis(50),
+        ..Default::default()
+    };
+    dispatch(&["privileged", "keyd", "clear"], b"", &s.fs, &mut sys).unwrap();
+    assert_eq!(
+        &sys.budgets[..2],
+        &[Duration::from_millis(5000), Duration::from_millis(4850)]
+    );
+    assert_eq!(
+        sys.budgets[2..],
+        [100, 100, 100, 150].map(Duration::from_millis)
+    );
+    assert!(!sys.calls.contains(&"stop"));
+}
+
+#[test]
+fn ipc_error_after_readiness_starts_stops_without_retry() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem {
+        error_health_at: Some(2),
+        ..Default::default()
+    };
+    let error = dispatch(&["privileged", "keyd", "clear"], b"", &s.fs, &mut sys).unwrap_err();
+    assert!(error.contains("stability"), "{error}");
+    assert!(error.contains("IPC connection unavailable"), "{error}");
+    assert_eq!(sys.health_count, 2);
+    assert_eq!(sys.calls.last(), Some(&"stop"));
+}
+
+#[test]
+fn not_ready_observations_retain_last_probe_error_on_timeout() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem {
+        initial_errors: 1,
+        fail_health: true,
+        ..Default::default()
+    };
+    let error = dispatch(&["privileged", "keyd", "clear"], b"", &s.fs, &mut sys).unwrap_err();
+    assert!(error.contains("timed out"), "{error}");
+    assert!(error.contains("IPC connection unavailable"), "{error}");
+    assert_eq!(sys.calls.last(), Some(&"stop"));
 }

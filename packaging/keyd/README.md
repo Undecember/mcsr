@@ -29,14 +29,27 @@ same devices. The distribution package must supply an installed, unmasked `keyd.
   nested fallbacks, so modifier changes cannot release a different output key.
 - `bind reset` releases held outputs and clears cached descriptors, active layers,
   queued events, references, and timers before restoring the original config.
+  When no configs are loaded, the exact `reset` expression succeeds as an empty
+  operation. Other bind expressions still fail in that state. This allows live
+  startup after Restore has returned `/etc/keyd` to its empty baseline.
 - `mcsr-capabilities` reports local support. `mcsr-daemon-capabilities` probes the
   running daemon over IPC. Both return `mcsr-layerk-v1` and `mcsr-matchmods-v1`;
   probing the local binary alone does not establish running-daemon compatibility.
 
 Run `python3 packaging/keyd/test.py` to verify pristine source hashes, apply the
-patch in a temporary directory, and execute the upstream/toolkit engine suites.
-These tests require no privileges or input devices. Rust asset tests additionally
-execute the embedded binary's capability and config-check commands.
+patch in a temporary directory, and execute the upstream/toolkit engine suites
+and daemon IPC reset checks. These tests require no privileges or input devices.
+Rust asset tests additionally execute the embedded binary's capability and
+config-check commands.
+
+After restarting keyd, the privileged helper waits for both active service state
+and the running daemon's required capabilities over IPC. Initial IPC startup
+failures can retry within a five-second readiness budget; an active systemd unit
+alone is insufficient. Probe time counts against the budget. Once ready, the
+daemon must remain healthy for 500 ms with no sampling gap above 200 ms. Loss of
+readiness during that interval, deadline expiry, or missing capabilities causes
+the helper to fail and stop keyd; a stop failure is reported as unsafe. The
+toolkit continues to report reset and cleanup errors rather than ignoring them.
 
 For updates, select an explicit upstream revision, replace the pristine vendored
 files and checksum manifest, rebase the small patch, then run both engine and

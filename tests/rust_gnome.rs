@@ -466,3 +466,78 @@ async fn routing_prepares_then_emits_ordered_marker_then_waits_for_consumer() {
         ["prepare", "marker-failed", "abort"]
     );
 }
+
+struct TogglePeer {
+    focus: (String, String, u32, u32, bool),
+    reply: Option<(u32, u32, bool)>,
+}
+impl GnomePeer for TogglePeer {
+    async fn get_focus(&self) -> Result<(String, String, u32, u32, bool), GnomeError> {
+        Ok(self.focus.clone())
+    }
+    async fn configure_presets(&self, _: String) -> Result<(), GnomeError> {
+        Ok(())
+    }
+    async fn resize_focused(&self, w: u32, h: u32) -> Result<(u32, u32), GnomeError> {
+        Ok((w, h))
+    }
+    async fn toggle_resize_focused(&self, _: u32, _: u32) -> Result<(u32, u32, bool), GnomeError> {
+        match self.reply {
+            Some(reply) => Ok(reply),
+            None => std::future::pending().await,
+        }
+    }
+}
+
+#[tokio::test]
+async fn toggle_validates_mode_dimensions_and_focus() {
+    let focus = Arc::new(StdMutex::new(FocusState::default()));
+    let game = ("Minecraft".into(), "Game".into(), 800, 600, false);
+    for (reply, expected) in [
+        ((800, 600, false), true),
+        ((1920, 1080, true), true),
+        ((801, 600, false), false),
+        ((99, 1080, true), false),
+        ((1920, 16385, true), false),
+    ] {
+        let bridge = GnomeBridge::new(
+            Arc::new(TogglePeer {
+                focus: game.clone(),
+                reply: Some(reply),
+            }),
+            focus.clone(),
+        );
+        assert_eq!(
+            bridge.toggle_resize_focused(800, 600).await.is_ok(),
+            expected,
+            "{reply:?}"
+        );
+    }
+    for (class, modal) in [("Terminal", false), ("Minecraft", true)] {
+        let bridge = GnomeBridge::new(
+            Arc::new(TogglePeer {
+                focus: (class.into(), "Game".into(), 800, 600, modal),
+                reply: Some((800, 600, false)),
+            }),
+            focus.clone(),
+        );
+        assert!(matches!(
+            bridge.toggle_resize_focused(800, 600).await,
+            Err(ResizeError::NotFocused)
+        ));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn toggle_method_timeout_does_not_fallback() {
+    let bridge = GnomeBridge::new(
+        Arc::new(TogglePeer {
+            focus: ("Minecraft".into(), "Game".into(), 800, 600, false),
+            reply: None,
+        }),
+        Arc::new(StdMutex::new(FocusState::default())),
+    );
+    assert!(
+        matches!(bridge.toggle_resize_focused(800, 600).await, Err(ResizeError::Gnome(error)) if error.0.contains("timed out"))
+    );
+}

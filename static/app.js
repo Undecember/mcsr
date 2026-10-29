@@ -488,6 +488,11 @@ if (typeof document !== 'undefined') {
       ['Instances', String(status.instances?.length ?? 0)],
       ['Focus', status.focus?.mode || 'Unknown']
     ];
+    if (status.focus?.window_mode === 'full_size') {
+      cards.push(['Last resize', 'Full-size borderless']);
+    } else if (status.focus?.window_mode === 'preset') {
+      cards.push(['Last resize', status.focus.active_preset ? `Preset: ${status.focus.active_preset}` : 'Preset size']);
+    }
     for (const [label, value] of cards) {
       const card = element('div', 'status-card');
       card.append(element('span', 'status-label', label), element('strong', '', value));

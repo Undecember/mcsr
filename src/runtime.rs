@@ -11,7 +11,7 @@ use std::{
     },
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Instant,
@@ -144,7 +144,8 @@ struct State {
     active_profile: Mutex<Option<Profile>>,
     configured_profile: Mutex<Option<Profile>>,
     routing_configuration: tokio::sync::Mutex<()>,
-    active_preset: Mutex<Option<(u64, String)>>,
+    active_preset: Mutex<Option<(u64, String, bool)>>,
+    profile_generation: AtomicU64,
     mutation: Mutex<()>,
     error: Mutex<Option<String>>,
     errors: Mutex<Vec<String>>,
@@ -168,9 +169,14 @@ impl RuntimeAdapter for State {
         process_cwds_under(Path::new("/proc"))
     }
     fn focus_status(&self) -> Value {
-        let focus = self.focus.lock().unwrap();
-        let focused = focus.effective_at(Instant::now());
-        let connected = focus.connected_at(Instant::now());
+        let (focused, connected, visible) = {
+            let focus = self.focus.lock().unwrap();
+            (
+                focus.effective_at(Instant::now()),
+                focus.connected_at(Instant::now()),
+                visible_active_preset(&focus, &self.active_preset),
+            )
+        };
         let pending = self.state_dir.join("mutation.json").exists();
         let recovery = self.maccel_recovery_pending || (self.sensitivity_recovery)();
         let usable = self.maccel_available && !recovery;
@@ -184,8 +190,13 @@ impl RuntimeAdapter for State {
             "eye zoom available"
         };
         let (activate, clear) = self.keyd.event_counts();
-        let active_preset = visible_active_preset(&focus, &self.active_preset);
-        json!({"mode": if self.live && self.active_profile.lock().unwrap().is_some() { "live" } else { "observe-only" }, "minecraft_focused":focused, "extension_connected":connected, "mutation_recovery_pending":pending, "cleanup_error":self.error.lock().unwrap().clone(), "activation_suspended":pending || recovery, "recovery_clear_pending":pending, "unsafe_stop_failure":false, "active_preset":active_preset, "fifo_errors":[], "errors":self.errors.lock().unwrap().clone(), "reconciliation":self.reconciliation.lock().unwrap().clone(), "keyd_available":self.keyd_available, "events":{"activate":activate,"clear":clear}, "maccel":{"available":self.maccel_available,"usable":usable,"detail":detail,"recovery_pending":recovery}})
+        let active_preset = visible
+            .as_ref()
+            .and_then(|(id, full_size)| (!full_size).then_some(id));
+        let window_mode = visible
+            .as_ref()
+            .map(|(_, full_size)| if *full_size { "full_size" } else { "preset" });
+        json!({"mode": if self.live && self.active_profile.lock().unwrap().is_some() { "live" } else { "observe-only" }, "minecraft_focused":focused, "extension_connected":connected, "mutation_recovery_pending":pending, "cleanup_error":self.error.lock().unwrap().clone(), "activation_suspended":pending || recovery, "recovery_clear_pending":pending, "unsafe_stop_failure":false, "active_preset":active_preset, "window_mode":window_mode, "fifo_errors":[], "errors":self.errors.lock().unwrap().clone(), "reconciliation":self.reconciliation.lock().unwrap().clone(), "keyd_available":self.keyd_available, "events":{"activate":activate,"clear":clear}, "maccel":{"available":self.maccel_available,"usable":usable,"detail":detail,"recovery_pending":recovery}})
     }
     fn live_activation_enabled(&self) -> bool {
         self.live
@@ -213,7 +224,9 @@ impl RuntimeAdapter for State {
         let bytes = serde_json::to_vec(profile).map_err(|e| e.to_string())?;
         atomic_replace(&self.state_dir.join("active-profile.json"), &bytes, true)
             .map_err(|e| e.to_string())?;
-        *self.active_profile.lock().unwrap() = Some(profile.clone());
+        let mut active_profile = self.active_profile.lock().unwrap();
+        *active_profile = Some(profile.clone());
+        self.profile_generation.fetch_add(1, Ordering::SeqCst);
         *self.active_preset.lock().unwrap() = None;
         Ok(())
     }
@@ -235,7 +248,9 @@ impl RuntimeAdapter for State {
             remove_record(&self.state_dir.join("active-profile.json"))
                 .map_err(|e| e.to_string())?;
         }
-        *self.active_profile.lock().unwrap() = profile.cloned();
+        let mut active_profile = self.active_profile.lock().unwrap();
+        *active_profile = profile.cloned();
+        self.profile_generation.fetch_add(1, Ordering::SeqCst);
         *self.active_preset.lock().unwrap() = None;
         Ok(())
     }
@@ -533,6 +548,7 @@ impl<P: GnomePeer + 'static, H: MaccelPeer + 'static> ServiceRuntime<P, H> {
             configured_profile: Mutex::new(None),
             routing_configuration: tokio::sync::Mutex::new(()),
             active_preset: Mutex::new(None),
+            profile_generation: AtomicU64::new(0),
             mutation: Mutex::new(()),
             error: Mutex::new(None),
             errors: Mutex::new(Vec::new()),
@@ -935,7 +951,13 @@ async fn apply_signal<P: GnomePeer, H: MaccelPeer>(
     if state.state_dir.join("mutation.json").exists() {
         return Err(RuntimeError("preset acceptance blocked".into()));
     }
-    let applied = state.active_profile.lock().unwrap().clone();
+    let (applied, profile_generation) = {
+        let profile = state.active_profile.lock().unwrap();
+        (
+            profile.clone(),
+            state.profile_generation.load(Ordering::SeqCst),
+        )
+    };
     let profile = match applied {
         Some(profile) => profile,
         None if configure && !state.live => load_profile(api)?,
@@ -978,38 +1000,50 @@ async fn apply_signal<P: GnomePeer, H: MaccelPeer>(
         .map(|(_, id)| id)
         .ok_or_else(|| err("invalid preset signal"))?;
     let result = preset
-        .apply(&profile, preset_id, shifted, &focus)
+        .apply_with_fence(&profile, preset_id, shifted, &focus, |result| {
+            let _profile = state.active_profile.lock().unwrap();
+            if state.profile_generation.load(Ordering::SeqCst) != profile_generation {
+                return Err(crate::gnome::PresetError(
+                    "profile changed during preset apply".into(),
+                ));
+            }
+            if !publish_active_preset(
+                &state.focus,
+                &state.active_preset,
+                focus_generation,
+                &result.preset_id,
+                result.full_size,
+            ) {
+                return Err(crate::gnome::PresetError(
+                    "preset focus changed during apply".into(),
+                ));
+            }
+            Ok(())
+        })
         .await
         .map_err(err)?;
-    if !publish_active_preset(
-        &state.focus,
-        &state.active_preset,
-        focus_generation,
-        &result.preset_id,
-    ) {
-        return Err(RuntimeError("preset focus changed during apply".into()));
-    }
     Ok(result)
 }
 
 fn publish_active_preset(
     focus: &SharedFocus,
-    active: &Mutex<Option<(u64, String)>>,
+    active: &Mutex<Option<(u64, String, bool)>>,
     generation: u64,
     id: &str,
+    full_size: bool,
 ) -> bool {
     let focus = focus.lock().unwrap();
     if focus.generation() != generation || !focus.effective_at(Instant::now()) {
         return false;
     }
-    *active.lock().unwrap() = Some((generation, id.to_owned()));
+    *active.lock().unwrap() = Some((generation, id.to_owned(), full_size));
     true
 }
 
 fn visible_active_preset(
     focus: &FocusState,
-    active: &Mutex<Option<(u64, String)>>,
-) -> Option<String> {
+    active: &Mutex<Option<(u64, String, bool)>>,
+) -> Option<(String, bool)> {
     if !focus.effective_at(Instant::now()) {
         return None;
     }
@@ -1017,8 +1051,8 @@ fn visible_active_preset(
         .lock()
         .unwrap()
         .as_ref()
-        .filter(|(generation, _)| *generation == focus.generation())
-        .map(|(_, id)| id.clone())
+        .filter(|(generation, _, _)| *generation == focus.generation())
+        .map(|(_, id, full_size)| (id.clone(), *full_size))
 }
 
 #[cfg(test)]
@@ -1039,7 +1073,7 @@ mod tests {
         focus.lock().unwrap().observe_at(event("Terminal"), now);
         focus.lock().unwrap().observe_at(event("Minecraft"), now);
         assert!(!super::publish_active_preset(
-            &focus, &active, generation, "eye"
+            &focus, &active, generation, "eye", false
         ));
         assert!(active.lock().unwrap().is_none());
         let new_generation = focus.lock().unwrap().generation();
@@ -1047,7 +1081,8 @@ mod tests {
             &focus,
             &active,
             new_generation,
-            "normal"
+            "normal",
+            false
         ));
         focus.lock().unwrap().observe_at(event("Terminal"), now);
         focus.lock().unwrap().observe_at(event("Minecraft"), now);

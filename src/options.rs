@@ -103,3 +103,93 @@ pub fn render_options(options: &OptionsDocument, plan: &ControlPlan) -> Vec<u8> 
     }
     rendered.into_bytes()
 }
+
+/// Prepare windowed mode independently of keyboard controls.
+pub fn render_windowed_options(bytes: &[u8]) -> Result<Vec<u8>, OptionsError> {
+    let document = parse_options(bytes)?;
+    let mut seen = false;
+    let mut output = String::new();
+    for line in &document.lines {
+        let body = line.trim_end_matches(['\r', '\n']);
+        if body == "fullscreen" || body.starts_with("fullscreen:") {
+            if seen {
+                return Err(OptionsError("duplicate fullscreen entry".into()));
+            }
+            seen = true;
+            match body.strip_prefix("fullscreen:") {
+                Some("true") => {
+                    output.push_str("fullscreen:false");
+                    output.push_str(&line[body.len()..]);
+                }
+                Some("false") => output.push_str(line),
+                _ => return Err(OptionsError("invalid fullscreen boolean".into())),
+            }
+        } else {
+            output.push_str(line);
+        }
+    }
+    if !seen {
+        let ending = document
+            .lines
+            .iter()
+            .find_map(|line| {
+                if line.ends_with("\r\n") {
+                    Some("\r\n")
+                } else if line.ends_with('\n') {
+                    Some("\n")
+                } else if line.ends_with('\r') {
+                    Some("\r")
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("\n");
+        let final_newline = output.ends_with(['\r', '\n']);
+        if !output.is_empty() && !final_newline {
+            output.push_str(ending);
+        }
+        output.push_str("fullscreen:false");
+        if final_newline {
+            output.push_str(ending);
+        }
+    }
+    Ok(output.into_bytes())
+}
+
+#[cfg(test)]
+mod windowed_tests {
+    use super::*;
+    #[test]
+    fn windowed_preserves_lines_and_never_enters_bindings() {
+        for (before, after) in [
+            ("fullscreen:true\nother:1\n", "fullscreen:false\nother:1\n"),
+            ("fullscreen:true\r\n", "fullscreen:false\r\n"),
+            ("fullscreen:true\r", "fullscreen:false\r"),
+            ("fullscreen:true", "fullscreen:false"),
+            ("fullscreen:false", "fullscreen:false"),
+            ("other:1\r\n", "other:1\r\nfullscreen:false\r\n"),
+            ("other:1", "other:1\nfullscreen:false"),
+            ("", "fullscreen:false"),
+        ] {
+            let result = render_windowed_options(before.as_bytes()).unwrap();
+            assert_eq!(result, after.as_bytes(), "{before:?}");
+            let doc = parse_options(&result).unwrap();
+            assert!(!doc.bindings.contains_key("fullscreen"));
+            let plan = crate::mapping::plan_controls(&doc, &Default::default(), None).unwrap();
+            assert_eq!(render_options(&doc, &plan), result);
+        }
+    }
+    #[test]
+    fn windowed_rejects_ambiguous_or_malformed_values() {
+        for text in [
+            "fullscreen:true\nfullscreen:false\n",
+            "fullscreen:yes",
+            "fullscreen:",
+            "fullscreen",
+            "fullscreen: true",
+            "fullscreen:true:false",
+        ] {
+            assert!(render_windowed_options(text.as_bytes()).is_err(), "{text}");
+        }
+    }
+}

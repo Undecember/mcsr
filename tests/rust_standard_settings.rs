@@ -140,3 +140,78 @@ fn rejects_legacy_redirect_chains_without_opening_shared_files() {
     assert!(prepare_local(dir.path(), &bindings()).is_err());
     assert_eq!(fs::read(&second).unwrap(), b"key_key.forward:old\n");
 }
+
+#[test]
+fn windowed_modern_edits_only_active_boolean_fullscreen() {
+    use mcsr_toolkit::standard_settings::prepare_local_with_windowed;
+    for source in [
+        r#"{"fullscreen":true,"unrelated":{"bad":"entry"}}"#,
+        r#"{"fullscreen":{"enabled":true,"value":true,"extra":3}}"#,
+    ] {
+        let dir = tempdir().unwrap();
+        put(dir.path(), "config/mcsr/standardsettings.json", source);
+        let edits = prepare_local_with_windowed(dir.path(), &IndexMap::new(), true).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&edits[0].after).unwrap();
+        assert!(v["fullscreen"] == false || v["fullscreen"]["value"] == false);
+        assert_eq!(
+            prepare_local(dir.path(), &IndexMap::new()).unwrap()[0].after,
+            source.as_bytes()
+        );
+    }
+    for source in [
+        r#"{"fullscreen":false}"#,
+        r#"{"fullscreen":{"enabled":false,"value":"ignored"}}"#,
+        r#"{"other":true}"#,
+    ] {
+        let dir = tempdir().unwrap();
+        put(dir.path(), "config/mcsr/standardsettings.json", source);
+        assert_eq!(
+            prepare_local_with_windowed(dir.path(), &IndexMap::new(), true).unwrap()[0].after,
+            source.as_bytes()
+        );
+    }
+    for source in [
+        r#"{"fullscreen":"true"}"#,
+        r#"{"fullscreen":{"enabled":true,"value":1}}"#,
+        r#"{"fullscreen":{"value":true}}"#,
+        r#"{"fullscreen":true,"fullscreen":false}"#,
+    ] {
+        let dir = tempdir().unwrap();
+        put(dir.path(), "config/mcsr/standardsettings.json", source);
+        assert!(prepare_local_with_windowed(dir.path(), &IndexMap::new(), true).is_err());
+    }
+}
+#[test]
+fn windowed_legacy_preserves_blank_missing_and_line_endings() {
+    use mcsr_toolkit::standard_settings::prepare_local_with_windowed;
+    for (source, expected) in [
+        (
+            "fullscreen:true\r\nother:x\r",
+            "fullscreen:false\r\nother:x\r",
+        ),
+        ("fullscreen:true", "fullscreen:false"),
+        ("fullscreen:false", "fullscreen:false"),
+        ("fullscreen:  ", "fullscreen:  "),
+        ("other:x", "other:x"),
+    ] {
+        let dir = tempdir().unwrap();
+        put(dir.path(), "config/standardoptions.txt", source);
+        assert_eq!(
+            prepare_local_with_windowed(dir.path(), &IndexMap::new(), true).unwrap()[0].after,
+            expected.as_bytes()
+        );
+    }
+    for source in [
+        "fullscreen:true\nfullscreen:false",
+        "fullscreen:yes",
+        "fullscreen",
+        "fullscreen:true:false",
+    ] {
+        let dir = tempdir().unwrap();
+        put(dir.path(), "config/standardoptions.txt", source);
+        assert!(
+            prepare_local_with_windowed(dir.path(), &IndexMap::new(), true).is_err(),
+            "{source}"
+        );
+    }
+}
