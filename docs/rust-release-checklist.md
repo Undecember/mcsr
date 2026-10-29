@@ -2,9 +2,12 @@
 
 ## v0.2.0 candidate — 2026-10-30
 
-Status: **candidate verified and independently reviewed (PASS); local release
-integration and tagging approved on 2026-10-30. Publication remains pending**.
-Cargo version: `0.2.0`; annotated release tag: `v0.2.0`.
+Status: **[v0.2.0 published as the latest stable release](https://github.com/Undecember/mcsr/releases/tag/v0.2.0)**
+at `2026-10-29T17:33:31Z` with `prerelease: false`. Release commit:
+`498c2a43ad492223e93a81d33ed5061f001f39ca`. Both release-commit CI runs and
+unauthenticated public download verification passed. Development synchronization
+and release branch/worktree cleanup are complete. Cargo version: `0.2.0`;
+annotated release tag: `v0.2.0`.
 Release branch/worktree: `release/v0.2.0`, `.worktrees/release-v0.2.0/`.
 Development base: `d6df1a7edd5241917623da01af9e4e9914624b78`; pushed to `origin/dev`.
 No matching remote release branch/tag existed at preparation time. Prior
@@ -32,10 +35,12 @@ remain the reviewed development versions. See [candidate release notes](rust-rel
   squash-merging `release/v0.2.0` into `main` and tagging `v0.2.0`. The operator
   approved local integration/tagging on 2026-10-30. Verify resulting refs directly;
   publication and development synchronization remain separately authorized steps.
-- [ ] Obtain authorization for release push/publication; publish exact staged assets.
-- [ ] Verify release-commit CI and unauthenticated public downloads.
-- [ ] Obtain separate approval for `main` → `dev` `--no-ff` synchronization;
-  verify before release branch/worktree cleanup.
+- [x] Obtain authorization for release push/publication; publish exact staged assets. The operator approved; main/tag push was atomic and publication is stable.
+- [x] Verify release-commit CI and unauthenticated public downloads. Both CI runs passed; both public assets match staged files byte for byte.
+- [x] Obtain separate approval for `main` → `dev` `--no-ff` synchronization;
+  verify before release branch/worktree cleanup. Approval received; synchronized
+  and verified before cleanup. Transient files were preserved, unrelated
+  worktrees retained, and no remote release branch existed.
 
 ### Verification and artifact identity
 
@@ -94,6 +99,40 @@ release inputs. Documentation and Graphify outputs are not embedded build
 inputs. Supporting artifact/environment/check JSON records are beside the
 staged directory. Preserve both staged assets after review; rebuild only if
 inputs change, and refresh identity before readiness approval.
+
+### Publication and synchronization verification
+
+- Published at `2026-10-29T17:33:31Z` with `draft: false`,
+  `prerelease: false`; GitHub latest-release metadata resolves to `v0.2.0`.
+- Main CI [40921832431](https://github.com/Undecember/mcsr/actions/runs/40921832431)
+  and tag CI [40921831916](https://github.com/Undecember/mcsr/actions/runs/40921831916)
+  both succeeded on release commit `498c2a43ad492223e93a81d33ed5061f001f39ca`.
+- Exactly two public assets: `mcsr-toolkit` (13,932,728 bytes) and
+  `mcsr-toolkit.sha256` (79 bytes). Both were downloaded without authentication,
+  match the staged files exactly, and pass `sha256sum --check` together.
+- Remote annotated tag object `72954e1d54164e96537d356ca9abc5d31f19bc30`
+  resolves to that release commit. All 211 tagged build inputs match the
+  recorded manifest; executable SHA256 remains unchanged.
+- Operator-approved `--no-ff` synchronization commit
+  `48dda7bd708881d82add77de5db0db71b2f43c37` has parents `d6df1a7` and
+  `498c2a4`; its tree exactly matches the tag. Squash-history conflicts in
+  README, release notes and generated graph files were resolved to the verified
+  release versions. Runtime sources merged cleanly.
+- The initial parallel synchronization test run failed in
+  `authenticated_status_command_has_a_deadline`: the freshly written temporary
+  helper could not launch (`Text file busy`, OS error 26). Its isolated retry
+  passed. `cargo test --locked --no-fail-fast -- --test-threads=1` then passed
+  all 405 tests (62 filtered, 23 reported suites); the extension harness passed.
+  No application code was changed. This records the initial failure and does
+  not claim an error-free parallel synchronization run.
+- Release and temporary main worktrees, plus the local `release/v0.2.0` branch,
+  were removed after merge/tag/artifact verification. The squash-merged branch
+  tree was checked identical to the tag before deletion. Its transient graph
+  and isolated browser files (148 total) were preserved under primary
+  `target/release-preparation/v0.2.0-worktree-preservation/`. Staged public assets
+  and source manifests remain available. Unrelated worktrees remain intact.
+- Detailed publication proof and synchronization/failure logs are retained
+  beside the primary staged assets in `target/release-preparation/`.
 
 ### Live scope and readiness limits
 

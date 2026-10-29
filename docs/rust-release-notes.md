@@ -1,8 +1,10 @@
 # MCSR Toolkit v0.2.0
 
-Approved for stable release on 2026-10-30. MCSR Toolkit v0.2.0 targets Ubuntu
-GNOME Shell 50 on x86_64 Wayland. Exact artifact identity and publication
-verification are tracked in [the release checklist](rust-release-checklist.md#v020-candidate--2026-10-30).
+[v0.2.0 is published as the latest stable release](https://github.com/Undecember/mcsr/releases/tag/v0.2.0).
+MCSR Toolkit v0.2.0 targets Ubuntu GNOME Shell 50 on x86_64 Wayland. Both release
+CI runs passed and both unauthenticated public downloads match the reviewed
+assets. Exact identity and publication verification are recorded in
+[the release checklist](rust-release-checklist.md#v020-candidate--2026-10-30).
 
 ## Changes since v0.1.0
 
@@ -105,11 +107,14 @@ metadata/documentation; no runtime behavior change is intended. The exact
 build-input manifest, executable SHA256, verification and local staged assets
 are recorded in [the release checklist](rust-release-checklist.md#v020-candidate--2026-10-30).
 
-The operator approved local release integration and annotated tag `v0.2.0` on
-2026-10-30: squash `release/v0.2.0` into release-only `main`. Publication and
-`main` → `dev` synchronization retain their separate approvals. Public download
-identity and release-commit CI must be verified after publication; local
-validation alone does not establish those results.
+The operator separately approved release integration/tagging, publication and
+development synchronization. Release commit:
+`498c2a43ad492223e93a81d33ed5061f001f39ca`; annotated tag: `v0.2.0`. Both
+release-commit CI runs passed, publication uses `prerelease: false`, and both
+public assets match the exact staged bytes. Synchronization commit
+`48dda7bd708881d82add77de5db0db71b2f43c37` brings the tagged tree into `dev`
+with `--no-ff`; release worktrees and the local release branch were removed
+after verification. No remote release branch existed.
 Previous stable release notes remain at the
 [v0.1.0 tag](https://github.com/Undecember/mcsr/blob/v0.1.0/docs/rust-release-notes.md).
 Report issues through the [issue tracker](https://github.com/Undecember/mcsr/issues).
