@@ -176,6 +176,30 @@ async fn f7_changes_sensitivity_only_after_exact_resize() {
 }
 
 #[tokio::test]
+async fn eye_resize_failure_propagates_without_sensitivity_write() {
+    let helper = FakeHelper::ready(3_221_225_472).await;
+    let sensitivity = Arc::new(SensitivityController::new(helper.clone()));
+    sensitivity.startup_restore().await.unwrap();
+    let gnome = Arc::new(FakeGnome::default());
+    *gnome.fail.lock().await = true;
+    let focus = focused();
+    let controller = PresetController::new(
+        Arc::new(GnomeBridge::new(gnome, focus.clone())),
+        sensitivity,
+        focus.clone(),
+    );
+    let snapshot = focus.lock().unwrap().clone();
+    let error = controller
+        .apply(&profile(), "eye", false, &snapshot)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("resize failed"));
+    let state = helper.state.lock().await;
+    assert_eq!(state.raw, 3_221_225_472);
+    assert_eq!(state.calls.as_slice(), &["restore"]);
+}
+
+#[tokio::test]
 async fn shifted_f7_preserves_existing_multiplier() {
     let helper = FakeHelper::ready(3_221_225_472).await;
     let sensitivity = Arc::new(SensitivityController::new(helper.clone()));
