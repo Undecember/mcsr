@@ -2,7 +2,7 @@
 
 ## v0.1.0 stable candidate — 2026-10-29
 
-Status: **Stable v0.1.0 is built, verified, and independently reviewed. Release-ready approval received for local squash integration and annotated tagging; public publication is pending.** The operator explicitly selected a non-beta release. Candidate tag: `v0.1.0`; Cargo package version: `0.1.0`. Release branch: `release/v0.1.0`, forked from `dev` at `a62271da0439a1a87eca881f4927ac98af5e2006`. No remote stable tag or matching release branch existed at preparation time. Historical beta records below are retained unchanged.
+Status: **[v0.1.0 published as a stable GitHub release](https://github.com/Undecember/mcsr/releases/tag/v0.1.0)** at `2026-10-29T11:48:12Z` with `prerelease: false`. Release commit: `35a37b825ff34326294a89c0bdcf4f8a6e04900a`, annotated tag: `v0.1.0`. Both release-commit CI runs passed and both public assets were downloaded without authentication and verified byte-identical to the staged files. The operator explicitly selected a non-beta release. Candidate tag: `v0.1.0`; Cargo package version: `0.1.0`. Release branch: `release/v0.1.0`, forked from `dev` at `a62271da0439a1a87eca881f4927ac98af5e2006`. No remote stable tag or matching release branch existed at preparation time. Historical beta records below are retained unchanged.
 
 ### Scope and source identity
 
@@ -21,9 +21,9 @@ The development base is not claimed to be the exact unmodified binary source. A 
 - [x] Verify checksum, executable identity, source-input manifest, ELF dependencies, and GLIBC requirement.
 - [x] Obtain independent review of preparation changes, stable metadata, artifact identity, and disclosed limitations: **PASS**, no material findings. The reviewer independently verified both assets, all 34 build-input hashes and the fingerprint, optimized-build identity, package version, ELF/GLIBC requirements, document links/anchors, and unchanged beta history.
 - [x] Obtain explicit release-ready approval before squash-merging `release/v0.1.0` into release-only `main` and tagging that release commit `v0.1.0`. The operator approved local integration and tagging on 2026-10-29. Verify the resulting commit and tag refs directly; push/publication and development synchronization require separate approval.
-- [ ] Obtain push/publication authorization; publish as a stable GitHub release with `prerelease: false`, using the exact staged assets.
-- [ ] Verify release-commit CI and public downloads against the staged executable and checksum.
-- [ ] Obtain approval for `main` → `dev` synchronization with `git merge --no-ff`; verify before release worktree/branch cleanup.
+- [x] Obtain push/publication authorization; publish as a stable GitHub release with `prerelease: false`, using the exact staged assets. The operator approved on 2026-10-29; `main` and the annotated tag were pushed atomically.
+- [x] Verify release-commit CI and public downloads against the staged executable and checksum. Both CI runs succeeded; both unauthenticated downloads are byte-identical to the staged files and the downloaded checksum passes.
+- [x] Obtain approval for `main` → `dev` synchronization with `git merge --no-ff`; verify before release worktree/branch cleanup. Operator approval received; synchronization commit `04c6427` matches the tagged tree and all 348 serial Rust tests passed. Squash-history conflicts in README and generated graph files were resolved to the reviewed release tree.
 
 ### Candidate verification
 
@@ -48,7 +48,15 @@ Completed in `.worktrees/release-v0.1.0/` using its own Cargo target directory, 
 | Executable bytes | `12,817,512` |
 | Checksum file bytes | `79` |
 
-The exact staged artifacts match the release worktree's optimized build. The recorded source fingerprint includes the release-only lint adjustment. The operator has approved a local release commit and annotated tag. No remote push or publication has been performed. Future GitHub publication must use `prerelease: false`; verify the exact public downloads and release-commit CI before claiming publication verification.
+The exact staged artifacts match the release worktree's optimized build. The recorded source fingerprint includes the release-only lint adjustment. The approved release commit and annotated tag are pushed, and GitHub publication uses `prerelease: false`. Public download identity and release-commit CI were verified as recorded below.
+
+### Publication verification
+
+- Public stable release: [v0.1.0](https://github.com/Undecember/mcsr/releases/tag/v0.1.0), published at `2026-10-29T11:48:12Z`. GitHub reports `draft: false` and `prerelease: false`; it is the latest release.
+- Exactly two assets: `mcsr-toolkit` (12,817,512 bytes) and `mcsr-toolkit.sha256` (79 bytes). Both public URLs were downloaded without authentication and both files match the reviewed staged files byte for byte. `sha256sum --check mcsr-toolkit.sha256` passed for the public downloads, retaining executable SHA256 `2c55101368ca33fcd0b7099e06cef51caf49b985cbf4ab71e3f8afcf84a71c73`.
+- Tagged source inputs match all 34 entries of the recorded source manifest. `main` has exactly one squash release commit after beta.3; annotated `v0.1.0` resolves to `35a37b825ff34326294a89c0bdcf4f8a6e04900a`.
+- Release commit CI: [main run 40867909749](https://github.com/Undecember/mcsr/actions/runs/40867909749) and [tag run 40867909976](https://github.com/Undecember/mcsr/actions/runs/40867909976) completed successfully for the exact release commit.
+- `main` synchronized back into `dev` using `--no-ff` after approval; merge tree matches the release and all 348 serial Rust tests passed. Publication documentation updates follow on `dev` without changing the tagged release or staged executable.
 
 ### Remaining live limitations
 

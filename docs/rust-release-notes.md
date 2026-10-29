@@ -1,6 +1,6 @@
 # MCSR Toolkit v0.1.0
 
-MCSR Toolkit v0.1.0 is the first stable release, distributed as a single Rust executable for Minecraft speedrunning on Ubuntu GNOME Wayland. It includes the loopback browser service, UI assets, GNOME Shell 50 extension, guided setup and recovery commands, and narrowly scoped privileged helper modes. Local release integration and tagging are approved; public release publication is pending.
+MCSR Toolkit v0.1.0 is the first stable release, distributed as a single Rust executable for Minecraft speedrunning on Ubuntu GNOME Wayland. It includes the loopback browser service, UI assets, GNOME Shell 50 extension, guided setup and recovery commands, and narrowly scoped privileged helper modes. The [stable release](https://github.com/Undecember/mcsr/releases/tag/v0.1.0) is published.
 
 ## New since beta.3
 
@@ -52,9 +52,9 @@ Report issues through the [GitHub issue tracker](https://github.com/Undecember/m
 
 ## Candidate verification and artifact identity
 
-Automated checks and local artifact identity are recorded in the [release checklist](https://github.com/Undecember/mcsr/blob/v0.1.0/docs/rust-release-checklist.md#v010-stable-candidate--2026-10-29). GitHub links using `v0.1.0` resolve after the reviewed tag is pushed.
+Automated checks and local artifact identity are recorded in the [release checklist](https://github.com/Undecember/mcsr/blob/v0.1.0/docs/rust-release-checklist.md#v010-stable-candidate--2026-10-29). The annotated tag resolves to release commit `35a37b825ff34326294a89c0bdcf4f8a6e04900a`.
 
-The candidate starts from development commit `a62271da0439a1a87eca881f4927ac98af5e2006`. Release preparation removes one redundant reference in `src/apply.rs` to satisfy Clippy; the fixture self-test also signals readiness after registering its shutdown handler to eliminate a test race. Neither adjustment changes application behavior. The release checklist records the exact source-input fingerprint so the uncommitted preparation delta is not confused with the base commit.
+The candidate starts from development commit `a62271da0439a1a87eca881f4927ac98af5e2006`. Release preparation removes one redundant reference in `src/apply.rs` to satisfy Clippy; the fixture self-test also signals readiness after registering its shutdown handler to eliminate a test race. Neither adjustment changes application behavior. The release checklist records the exact source-input fingerprint so the release preparation delta is not confused with the development base commit.
 
 | Item | Value |
 | --- | --- |
