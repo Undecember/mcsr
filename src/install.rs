@@ -51,6 +51,7 @@ pub struct Environment {
     pub other_toolkit_active: bool,
     pub keyd_recovery_pending: bool,
     pub maccel_recovery_pending: bool,
+    pub root_status_error: Option<String>,
     pub missing_commands: Vec<String>,
 }
 impl Environment {
@@ -66,6 +67,7 @@ impl Environment {
             other_toolkit_active: false,
             keyd_recovery_pending: false,
             maccel_recovery_pending: false,
+            root_status_error: None,
             missing_commands: vec![],
         }
     }
@@ -278,6 +280,11 @@ pub fn preflight(system: &dyn System) -> InstallReport {
         )),
         Ok(_) => {}
         Err(e) => report.problems.push(e.to_string()),
+    }
+    if let Some(error) = &env.root_status_error {
+        report
+            .problems
+            .push(format!("root status verification failed: {error}"));
     }
     if env.keyd_recovery_pending {
         report.problems.push("keyd recovery pending".into());
@@ -1602,6 +1609,11 @@ fn refuse_after_stop(system: &dyn System, was_active: bool, refusal: InstallErro
 pub fn uninstall(system: &dyn System) -> Result<(), InstallError> {
     let _install_guard = system.lock_install()?;
     let env = system.environment()?;
+    if let Some(error) = &env.root_status_error {
+        return Err(InstallError::Refused(format!(
+            "root status verification failed: {error}"
+        )));
+    }
     check_uninstall_records(system, &env)?;
     let marker = env.marker_path();
     if system.read(&marker)?.is_some() {
@@ -1622,6 +1634,11 @@ pub fn uninstall(system: &dyn System) -> Result<(), InstallError> {
     let validation = (|| {
         system.recover_input()?;
         let env = system.environment()?;
+        if let Some(error) = &env.root_status_error {
+            return Err(InstallError::Refused(format!(
+                "root status verification failed: {error}"
+            )));
+        }
         check_uninstall_records(system, &env)?;
         if env.keyd_recovery_pending || env.maccel_recovery_pending {
             return Err(InstallError::Refused(
@@ -1711,6 +1728,26 @@ pub fn uninstall(system: &dyn System) -> Result<(), InstallError> {
                 errors.join("; ")
             )))
         };
+    }
+    Ok(())
+}
+
+fn recover_keyd_with(
+    mut output: impl FnMut(&str, &[&str]) -> Result<String, InstallError>,
+) -> Result<(), InstallError> {
+    if output("/usr/bin/systemctl", &["is-active", "keyd.service"])
+        .ok()
+        .as_deref()
+        == Some("active")
+    {
+        // The trusted helper validates configs and restarts a healthy daemon,
+        // which also drops dynamic binds. A client reset is redundant and fails
+        // with upstream keyd when there are no loaded configurations.
+        output(
+            "/usr/bin/sudo",
+            &["-n", HELPER_PATH, "privileged", "keyd", "clear"],
+        )?;
+        output("/usr/bin/systemctl", &["is-active", "keyd.service"])?;
     }
     Ok(())
 }
@@ -1926,6 +1963,7 @@ struct RootStatusSnapshot {
     keyd_pending: bool,
     maccel_pending: bool,
     policy: PolicyStatus,
+    error: Option<String>,
 }
 fn root_status_snapshot(
     keyd_probe: Result<(), std::io::Error>,
@@ -1937,17 +1975,36 @@ fn root_status_snapshot(
     let keyd = present(&keyd_probe);
     let maccel = present(&maccel_probe);
     let policy = present(&policy_probe);
-    let status = if keyd || maccel || policy {
-        authenticated().ok()
+    let verified = if keyd || maccel || policy {
+        authenticated()
+            .and_then(|status| {
+                let fields = status.split_once(" maccel=").and_then(|(keyd, rest)| {
+                    let (maccel, policy) = rest.split_once(" policies=")?;
+                    if !matches!(keyd, "keyd=clear" | "keyd=active")
+                        || !matches!(maccel, "clear" | "baseline_pending")
+                        || !matches!(policy, "match" | "missing" | "mismatch")
+                    {
+                        return None;
+                    }
+                    Some((keyd.to_owned(), maccel.to_owned(), policy.to_owned()))
+                });
+                fields.ok_or_else(|| {
+                    InstallError::Refused(format!(
+                        "malformed authenticated root status response: {status:?}"
+                    ))
+                })
+            })
+            .map(Some)
     } else {
-        None
+        Ok(None)
     };
-    let fields = status.as_deref().and_then(|s| {
-        let (keyd, rest) = s.split_once(" maccel=")?;
-        let (maccel, policy) = rest.split_once(" policies=")?;
-        Some((keyd, maccel, policy))
-    });
+    let error = verified.as_ref().err().map(ToString::to_string);
+    let fields = verified.ok().flatten();
+    let fields = fields
+        .as_ref()
+        .map(|(keyd, maccel, policy)| (keyd.as_str(), maccel.as_str(), policy.as_str()));
     RootStatusSnapshot {
+        error,
         keyd_pending: keyd && fields.is_none_or(|(value, _, _)| value != "keyd=clear"),
         maccel_pending: maccel && fields.is_none_or(|(_, value, _)| value != "clear"),
         policy: if !policy {
@@ -2139,6 +2196,7 @@ impl RealSystem {
                 other_toolkit_active,
                 keyd_recovery_pending: root_status.keyd_pending,
                 maccel_recovery_pending: root_status.maccel_pending,
+                root_status_error: root_status.error,
                 missing_commands,
             }),
         })
@@ -2225,8 +2283,10 @@ impl RealSystem {
             .map_err(|e| InstallError::System(format!("{command}: {e}")))?;
         if !out.status.success() {
             return Err(InstallError::System(format!(
-                "{command} {}: {}",
+                "{command} {}: {}; stdout: {}; stderr: {}",
                 args.join(" "),
+                out.status,
+                String::from_utf8_lossy(&out.stdout).trim(),
                 String::from_utf8_lossy(&out.stderr).trim()
             )));
         }
@@ -2706,18 +2766,7 @@ impl System for RealSystem {
     }
     fn recover_input(&self) -> Result<(), InstallError> {
         // Do not remove the helper until both recovery paths are verified clear.
-        if Self::output("/usr/bin/systemctl", &["is-active", "keyd.service"])
-            .ok()
-            .as_deref()
-            == Some("active")
-        {
-            Self::run("/usr/bin/keyd", &["bind", "reset"])?;
-            Self::run(
-                "/usr/bin/sudo",
-                &["-n", HELPER_PATH, "privileged", "keyd", "clear"],
-            )?;
-            Self::run("/usr/bin/systemctl", &["is-active", "keyd.service"])?;
-        }
+        recover_keyd_with(Self::output)?;
         if Path::new("/run/mcsr-toolkit-maccel").exists() {
             Self::run(
                 "/usr/bin/sudo",
@@ -2740,6 +2789,147 @@ impl System for RealSystem {
 #[cfg(test)]
 mod tests {
     use std::io;
+
+    #[test]
+    fn failed_commands_report_exit_status_and_both_output_streams() {
+        for script in [
+            "printf 'inactive'; exit 7",
+            "printf 'status output'; printf 'authentication denied' >&2; exit 7",
+            "exit 7",
+        ] {
+            for error in [
+                super::RealSystem::output("/bin/sh", &["-c", script]).unwrap_err(),
+                super::run_status_command(
+                    std::path::Path::new("/bin/sh"),
+                    &["-c", script],
+                    std::time::Duration::from_secs(1),
+                )
+                .unwrap_err(),
+            ] {
+                let diagnostic = error.to_string();
+                assert!(diagnostic.contains("exit status: 7"), "{diagnostic}");
+                if script.contains("inactive") {
+                    assert!(diagnostic.contains("inactive"), "{diagnostic}");
+                }
+                if script.contains("authentication denied") {
+                    assert!(diagnostic.contains("status output"), "{diagnostic}");
+                    assert!(diagnostic.contains("authentication denied"), "{diagnostic}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn root_status_preserves_verification_failures_for_histories_and_policy_only_state() {
+        for histories in [false, true] {
+            for reason in [
+                "root status helper hash differs; manual review required",
+                "authentication denied (exit status: 126)",
+            ] {
+                let probe = || {
+                    if histories {
+                        Ok(())
+                    } else {
+                        Err(io::ErrorKind::NotFound.into())
+                    }
+                };
+                let snapshot = super::root_status_snapshot(probe(), probe(), Ok(()), || {
+                    Err(super::InstallError::Refused(reason.into()))
+                });
+                assert_eq!(snapshot.error.as_deref(), Some(reason));
+                assert_eq!(snapshot.keyd_pending, histories);
+                assert_eq!(snapshot.maccel_pending, histories);
+                assert_eq!(snapshot.policy, super::PolicyStatus::Unknown);
+            }
+        }
+        let malformed = super::root_status_snapshot(
+            Err(io::ErrorKind::NotFound.into()),
+            Err(io::ErrorKind::NotFound.into()),
+            Ok(()),
+            || Ok("not a status response".into()),
+        );
+        assert!(malformed
+            .error
+            .unwrap()
+            .contains("malformed authenticated root status"));
+    }
+
+    #[test]
+    fn malformed_root_status_cannot_partially_clear_recovery() {
+        for status in [
+            "keyd=clear maccel=clear policies=unknown",
+            "keyd=unknown maccel=clear policies=match",
+            "keyd=clear maccel=unknown policies=match",
+            "keyd=clear maccel=clear policies=match extra",
+            "",
+        ] {
+            let snapshot =
+                super::root_status_snapshot(Ok(()), Ok(()), Ok(()), || Ok(status.into()));
+            assert!(snapshot.keyd_pending, "{status}");
+            assert!(snapshot.maccel_pending, "{status}");
+            assert_eq!(snapshot.policy, super::PolicyStatus::Unknown, "{status}");
+        }
+    }
+
+    #[test]
+    fn uninstall_keyd_recovery_accepts_empty_configuration_without_client_reset() {
+        let mut calls = Vec::new();
+        super::recover_keyd_with(|program, args| {
+            calls.push((program.to_owned(), args.join(" ")));
+            match (program, args) {
+                ("/usr/bin/systemctl", ["is-active", "keyd.service"]) => Ok("active".into()),
+                ("/usr/bin/sudo", ["-n", super::HELPER_PATH, "privileged", "keyd", "clear"]) => {
+                    Ok(String::new())
+                }
+                // keyd.rvaiya returns 255 for bind reset when no configs are loaded;
+                // /usr/bin/keyd may also be absent entirely.
+                _ => Err(super::InstallError::System(
+                    "client reset unavailable for empty configuration".into(),
+                )),
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                ("/usr/bin/systemctl".into(), "is-active keyd.service".into()),
+                (
+                    "/usr/bin/sudo".into(),
+                    "-n /usr/local/libexec/mcsr-toolkit privileged keyd clear".into()
+                ),
+                ("/usr/bin/systemctl".into(), "is-active keyd.service".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn uninstall_keyd_recovery_propagates_clear_and_health_failures() {
+        for fail_at in [1, 2] {
+            let mut calls = 0;
+            let error = super::recover_keyd_with(|program, args| {
+                let current = calls;
+                calls += 1;
+                if current == fail_at {
+                    return Err(super::InstallError::System("keyd recovery failed".into()));
+                }
+                match (program, args) {
+                    ("/usr/bin/systemctl", ["is-active", "keyd.service"]) => Ok("active".into()),
+                    (
+                        "/usr/bin/sudo",
+                        ["-n", super::HELPER_PATH, "privileged", "keyd", "clear"],
+                    ) => Ok(String::new()),
+                    _ => panic!("unexpected recovery command"),
+                }
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("keyd recovery failed"));
+            assert_eq!(
+                calls,
+                fail_at + 1,
+                "recovery must stop at its first failure"
+            );
+        }
+    }
 
     #[test]
     fn shell_object_probe_distinguishes_exported_interface_absence_and_bus_failure() {

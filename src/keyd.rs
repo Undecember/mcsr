@@ -167,7 +167,8 @@ pub(crate) fn run_command(
         .map_err(|e| e.to_string())?;
     if !status.success() {
         return Err(CommandFailure::Failed(format!(
-            "command failed: {}",
+            "command failed: {status}; stdout: {}; stderr: {}",
+            String::from_utf8_lossy(&out).trim(),
             String::from_utf8_lossy(&err).trim()
         )));
     }

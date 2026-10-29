@@ -1,13 +1,14 @@
-# MCSR Toolkit v0.1.0-beta.2
+# MCSR Toolkit v0.1.0-beta.3
 
 MCSR Toolkit is a local setup and keybind configurator for Minecraft speedrunning on Ubuntu GNOME Wayland. This beta is distributed as a single Rust executable. It includes the loopback browser service, UI assets, GNOME Shell 50 extension, guided setup and recovery commands, and narrowly scoped privileged helper modes.
 
-## New in beta.2
+## New in beta.3
 
-- Choose Minecraft controls by their default key and action name, search the list, or enter a custom control ID for modded bindings. Labels use Minecraft Java 1.16 defaults rather than the instance's current bindings; existing custom IDs are preserved.
-- Use **Record input…** beside binding fields to record physical keyboard keys or supported mouse buttons. Recording expires after five seconds, preserves the previous value on timeout or focus loss, and keeps manual entry available for desktop-reserved keys.
-- Record left/right modifiers in shortcuts and use the expanded navigation, punctuation, lock, and keypad key support.
-- Native Minecraft controls and emitted crafting/Ninjabrain bindings can record left, middle, right, back, and forward mouse buttons. Managed keyd configuration matches keyboards, so physical crafting/Ninjabrain sources and chat fields record keyboard inputs; resize presets require keyboard shortcuts. Extra mouse buttons depend on browser delivery. Wheel and pointer movement recording are not supported.
+- Fix uninstall on systems that provide `/usr/bin/keyd.rvaiya` without `/usr/bin/keyd`. Recovery uses the trusted helper to validate configuration, restart keyd, and verify daemon health, avoiding the client reset that fails when no configurations are loaded.
+- Preserve the cause of root recovery verification failures in `doctor`, including helper hash mismatch, authentication failure, and malformed status. Unverified recovery still blocks installation and uninstall, including when only protected policy files remain.
+- Include exit status, stdout, and stderr in failed-command diagnostics, so a command that exits without output no longer produces an unexplained blank error.
+
+The control picker, keyboard/mouse input recording, expanded key support, and other beta.2 features remain included.
 
 ## Highlights
 
@@ -32,32 +33,37 @@ Inspect the `doctor` report before continuing. Run install separately after revi
 ./mcsr-toolkit install
 ```
 
-If install stages a GNOME extension and reports that setup is incomplete, log out of GNOME Wayland, log back in, then run `./mcsr-toolkit repair` from the same verified executable. For interrupted setup or uninstall, use `doctor` and the documented recovery guidance in the [README](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.2/README.md#repair-and-uninstall). Review recovery state before continuing; do not delete markers or recovery records to bypass a refusal.
+If install stages a GNOME extension and reports that setup is incomplete, log out of GNOME Wayland, log back in, then run `./mcsr-toolkit repair` from the same verified executable. For interrupted setup or uninstall, use `doctor` and the documented recovery guidance in the [README](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.3/README.md#repair-and-uninstall). Review recovery state before continuing; do not delete markers or recovery records to bypass a refusal.
 
-To uninstall, first restore toolkit-managed keyd and maccel state and verify ordinary input, then run `./mcsr-toolkit uninstall`. Review the README's [uninstall and drop-in guidance](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.2/README.md#repair-and-uninstall) before removing user service overrides.
+A downloaded executable must match the installed root helper before it can verify protected recovery state. If `doctor` reports a helper hash mismatch, run `/usr/local/bin/mcsr-toolkit doctor` from the matching installed version to inspect recovery. This diagnostic does not update the installation or authorize overwriting the helper; a mismatched existing helper still requires manual review.
+
+To uninstall, first restore toolkit-managed keyd and maccel state and verify ordinary input, then run the matching installed `/usr/local/bin/mcsr-toolkit uninstall`. Older installed uninstallers retain their original behavior until updated; downloading this candidate alone does not fix them. Review the README's [uninstall and drop-in guidance](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.3/README.md#repair-and-uninstall) before removing user service overrides.
 
 ## Beta status and known limitations
 
-Earlier supervised Rust checks passed for installation and repair, browser Save/Preview/Apply/Restore, live Backward remapping, the Enter dual-role chat case, focus clearing, and recovery to the recorded keyd, sensitivity, and Minecraft options baselines. Those checks predate beta.2 and do not validate the new recording and picker behavior on a live Minecraft device. The detailed evidence and limits are in the [Wayland acceptance record](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.2/integration/acceptance-wayland.md).
+Earlier supervised Rust checks passed for installation and repair, browser Save/Preview/Apply/Restore, live Backward remapping, the Enter dual-role chat case, focus clearing, and recovery to the recorded keyd, sensitivity, and Minecraft options baselines. Those checks predate beta.2 and beta.3 and do not validate the recording/picker behavior or the new uninstall recovery sequence on a live Minecraft device. The beta.3 fix has regression and helper/rollback test coverage; successful live uninstall with the rebuilt candidate has not been observed. The detailed evidence and limits are in the [Wayland acceptance record](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.3/integration/acceptance-wayland.md).
 
 - A live GNOME logout/login while a key remap is active has not been tested. The operator deferred this case for beta feedback.
-- Lock/unlock and service crash/restart recovery were observed for eye sensitivity in observe-only mode. They have not been tested while live keyd remapping is active; see the dated [Rust acceptance record](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.2/integration/acceptance-wayland.md#2026-10-26-rust-enter-dual-role-live-acceptance).
-- Guided uninstall with rollback and authentication prompt counts has not been tested on the supervised Rust device. Review the checklist before using uninstall and report problems through the [GitHub issue tracker](https://github.com/Undecember/mcsr/issues).
+- Lock/unlock and service crash/restart recovery were observed for eye sensitivity in observe-only mode. They have not been tested while live keyd remapping is active; see the dated [Rust acceptance record](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.3/integration/acceptance-wayland.md#2026-10-26-rust-enter-dual-role-live-acceptance).
+- Successful guided uninstall with rollback and authentication prompt counts has not been validated on the supervised Rust device. The old installed uninstaller failed with a missing `/usr/bin/keyd`, then a silent `bind reset` failure; beta.3 addresses those reproduced causes in source, without claiming live acceptance. Review the checklist before using uninstall and report problems through the [GitHub issue tracker](https://github.com/Undecember/mcsr/issues).
 - Focus changes are asynchronous. A brief interval may occur before keyd bindings clear; the observed checks do not establish zero input leakage during focus transitions.
 - A separate Restore cycle using the installed binary with the new-instance Restore fix was not rerun. Existing observed Restore and recovery outcomes are documented in the acceptance record.
 
 ## Candidate verification and artifact identity
 
-The release artifacts were built and verified locally. Automated verification results and the publication checklist are recorded in the [release checklist](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.2/docs/rust-release-checklist.md#v010-beta2-candidate--2026-10-29).
+The artifacts were built and verified locally. Automated verification results, publication status, and public download verification are recorded in the [release checklist](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.3/docs/rust-release-checklist.md#v010-beta3-candidate--2026-10-29).
 
-The executable's binary source base is commit `8b81d6f7a681492e2dcb88eaf625abc84f4119ce`. The release tag commit may be newer because it includes release documentation. Application source, embedded assets, and `Cargo.lock` match that source base; local agent configuration and generated Graphify files are outside the binary inputs.
+The executable's binary source base is commit `e3090238f9317927dfab175bef3cce1c896f6be8`. The release tag commit may be newer because it includes release documentation. Application source, embedded assets, and `Cargo.lock` match that source base; local agent configuration and generated Graphify files are outside the binary inputs.
 
 | Item | Value |
 | --- | --- |
-| Binary source base | `8b81d6f7a681492e2dcb88eaf625abc84f4119ce` |
-| Executable SHA256 | `4f8b21e648fdc7d7d8fc96bb27d7b5e3e0e290643fae6c66856450760662f00d` |
-| Build environment | Ubuntu 24.04.5 LTS, Linux 6.8.0-147-generic, `x86_64-unknown-linux-gnu`; Rust/Cargo 1.91.1, Node.js 24.14.1, GLib 2.80.0 |
+| Binary source base | `e3090238f9317927dfab175bef3cce1c896f6be8` |
+| Executable SHA256 | `98154ab5152ab73029bf4f9ac753514870abed6b6b4ad6803453cfadd20afc14` |
+| Executable size | `12,730,704` bytes |
+| Build environment | Ubuntu 26.04.1 LTS, Linux 7.0.0-38-generic, `x86_64-unknown-linux-gnu`; Rust/Cargo 1.98.1, Node.js 24.21.0, GLib 2.88.0 |
 
-The matching `mcsr-toolkit.sha256` must be published beside that executable. Verify the exact downloaded public files after publication; local candidate verification does not establish their identity. Build and deterministic verification commands are in the [README](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.2/README.md#build-and-deterministic-checks). This project is licensed under [MIT](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.2/LICENSE).
+The staged candidate is under `target/release-preparation/v0.1.0-beta.3/` in the primary checkout. Its dynamic library requirements resolve locally, and its highest required GLIBC symbol version is `2.39`; no Python runtime library is linked. This is local dependency verification, not a test on other Ubuntu versions.
 
-The Cargo package version remains `0.1.0`, following beta.1's convention. This prerelease is identified by tag `v0.1.0-beta.2` and the exact executable SHA256 above.
+The matching `mcsr-toolkit.sha256` must be published beside that executable. Verify the exact downloaded public files after publication; local candidate verification does not establish their identity. Build and deterministic verification commands are in the [README](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.3/README.md#build-and-deterministic-checks). This project is licensed under [MIT](https://github.com/Undecember/mcsr/blob/v0.1.0-beta.3/LICENSE).
+
+The Cargo package version remains `0.1.0`, following beta.1's convention. This prerelease is identified by tag `v0.1.0-beta.3` and the exact executable SHA256 above.
