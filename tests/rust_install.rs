@@ -1773,6 +1773,27 @@ fn uninstall_preserves_helpers_until_recovery_is_clear() {
 }
 
 #[test]
+fn uninstall_recovery_failure_retains_helpers_and_restarts_previous_service() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    fake.fail_on("recover_input");
+    let before = fake.events.lock().unwrap().len();
+    assert!(uninstall(&fake)
+        .unwrap_err()
+        .to_string()
+        .contains("recover_input"));
+    assert!(*fake.service_running.lock().unwrap());
+    assert!(fake.get(HELPER_PATH).is_some());
+    assert!(fake.get("/etc/sudoers.d/mcsr-toolkit-rust-keyd").is_some());
+    assert!(fake.get(UNIT_PATH).is_some());
+    let events = fake.events.lock().unwrap();
+    assert_eq!(
+        &events[before..],
+        &["service:Stop", "recover_input", "service:Start"]
+    );
+}
+
+#[test]
 fn policy_grants_only_fixed_helper_commands_for_desktop_login() {
     let fake = Fake::new();
     install(&fake, &fake.artifact()).unwrap();
@@ -2087,4 +2108,37 @@ fn marker_removal_failure_keeps_durable_repair_marker_and_verified_root_files() 
         .is_some());
     fake.fail.lock().unwrap().clear();
     repair(&fake, &fake.artifact()).unwrap();
+}
+
+#[test]
+fn root_verification_errors_block_mutation_and_remain_visible_with_only_policies() {
+    for reason in [
+        "root status helper hash differs; manual review required",
+        "authentication denied (exit status: 126)",
+        "malformed authenticated root status response",
+    ] {
+        let fake = Fake::new();
+        fake.put("/etc/sudoers.d/mcsr-toolkit-rust-keyd", b"existing policy");
+        let before = fake.files.lock().unwrap().clone();
+        fake.env.lock().unwrap().root_status_error = Some(reason.into());
+        let report = preflight(&fake);
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|problem| problem.contains(reason)),
+            "{report:?}"
+        );
+        for error in [
+            install(&fake, &fake.artifact()).unwrap_err(),
+            uninstall(&fake).unwrap_err(),
+        ] {
+            assert!(error.to_string().contains(reason), "{error}");
+        }
+        assert_eq!(*fake.files.lock().unwrap(), before);
+        assert!(
+            fake.events.lock().unwrap().is_empty(),
+            "verification must precede mutation"
+        );
+    }
 }

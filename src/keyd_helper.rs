@@ -201,6 +201,13 @@ pub trait HelperSystem {
     fn sleep(&mut self, duration: Duration);
 }
 
+fn select_keyd_client_with(mut trusted: impl FnMut(&Path) -> bool) -> Result<&'static str, String> {
+    ["/usr/bin/keyd.rvaiya", "/usr/bin/keyd"]
+        .into_iter()
+        .find(|path| trusted(Path::new(path)))
+        .ok_or_else(|| "keyd client unavailable".into())
+}
+
 pub struct RealSystem {
     started: Instant,
 }
@@ -214,18 +221,14 @@ impl Default for RealSystem {
 impl HelperSystem for RealSystem {
     fn list_keys(&mut self) -> Result<String, String> {
         let fs = HelperFilesystem::production();
-        for path in ["/usr/bin/keyd.rvaiya", "/usr/bin/keyd"] {
-            if fs.verify_file(Path::new(path), true, false).is_ok() {
-                return run_command(
-                    &[path.into(), "list-keys".into()],
-                    &[],
-                    Duration::from_secs(5),
-                )
-                .map(|result| result.stdout)
-                .map_err(|e| format!("keyd list-keys failed: {e}"));
-            }
-        }
-        Err("keyd client unavailable".into())
+        let path = select_keyd_client_with(|path| fs.verify_file(path, true, false).is_ok())?;
+        run_command(
+            &[path.into(), "list-keys".into()],
+            &[],
+            Duration::from_secs(5),
+        )
+        .map(|result| result.stdout)
+        .map_err(|e| format!("keyd list-keys failed: {e}"))
     }
 
     fn systemctl(&mut self, action: &'static str) -> Result<bool, String> {
@@ -654,5 +657,70 @@ pub fn dispatch(
         let previous = current(fs_adapter, &keys)?;
         apply_and_restart(fs_adapter, &wanted, &previous, system)?;
         Ok(Some(serde_json::json!({"restored": id}).to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helper_selects_trusted_rvaiya_before_fallback_and_rejects_unsafe_clients() {
+        use std::os::unix::fs::symlink;
+        // Both clients, rvaiya only, fallback only, unsafe rvaiya, neither trusted.
+        for (rvaiya_mode, fallback_mode, expected) in [
+            (Some(0o755), Some(0o755), Some("/usr/bin/keyd.rvaiya")),
+            (Some(0o755), None, Some("/usr/bin/keyd.rvaiya")),
+            (None, Some(0o755), Some("/usr/bin/keyd")),
+            (Some(0o777), Some(0o755), Some("/usr/bin/keyd")),
+            (Some(0o644), Some(0o777), None),
+            (None, None, None),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let bin = temp.path().join("usr/bin");
+            fs::create_dir_all(&bin).unwrap();
+            for directory in [
+                temp.path().to_path_buf(),
+                temp.path().join("usr"),
+                bin.clone(),
+            ] {
+                fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let fs_adapter = HelperFilesystem::sandbox(
+                temp.path().join("etc/keyd"),
+                temp.path().join("backups"),
+                temp.path().join("helper"),
+                temp.path().to_path_buf(),
+                unsafe { libc::geteuid() },
+            );
+            for (name, mode) in [("keyd.rvaiya", rvaiya_mode), ("keyd", fallback_mode)] {
+                if let Some(mode) = mode {
+                    let path = bin.join(name);
+                    fs::write(&path, b"test executable").unwrap();
+                    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+                }
+            }
+            let select = || {
+                select_keyd_client_with(|path| {
+                    fs_adapter
+                        .verify_file(
+                            &temp.path().join(path.strip_prefix("/").unwrap()),
+                            true,
+                            false,
+                        )
+                        .is_ok()
+                })
+            };
+            assert_eq!(select().ok(), expected);
+            // Even a symlink to the safe fallback must not qualify as rvaiya.
+            if fallback_mode == Some(0o755) {
+                let rvaiya = bin.join("keyd.rvaiya");
+                if rvaiya.exists() {
+                    fs::remove_file(&rvaiya).unwrap();
+                }
+                symlink(bin.join("keyd"), rvaiya).unwrap();
+                assert_eq!(select().unwrap(), "/usr/bin/keyd");
+            }
+        }
     }
 }
