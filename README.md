@@ -16,7 +16,11 @@ Download `mcsr-toolkit` and its matching `mcsr-toolkit.sha256` from the same rev
 sha256sum --check mcsr-toolkit.sha256 && chmod +x ./mcsr-toolkit && ./mcsr-toolkit doctor
 ```
 
-`doctor` reports prerequisites and unresolved recovery without changing keyboard configuration, sensitivity, or service state. Inspect its report before continuing. Install by running the verified executable:
+`doctor` reports prerequisites and unresolved recovery without changing keyboard configuration, sensitivity, or service state. Inspect its report before continuing.
+
+A downloaded executable may be unable to verify an installed helper from a different version: the root status helper hash must match the executable running the check. If `doctor` reports a helper hash mismatch, run `/usr/local/bin/mcsr-toolkit doctor` from the matching installed version and review its recovery report. A mismatch, failed authentication, or malformed root status blocks installation and uninstall; keep the helper and policies available for recovery.
+
+Install by running the verified executable:
 
 ```sh
 ./mcsr-toolkit install
