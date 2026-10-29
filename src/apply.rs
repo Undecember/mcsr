@@ -5,6 +5,7 @@ use crate::paths::{
     atomic_replace, ensure_state, private_dir, remove_record, safe_record, state_dir, sync_dir,
 };
 use crate::profile::Profile;
+use crate::standard_settings::{prepare_local, ConfigEdit};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -85,12 +86,21 @@ struct Manifest {
     prior_history: History,
     profile: Profile,
     keyd_after: Vec<String>,
+    // None identifies an older backup that did not manage mod configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mod_files: Option<BTreeMap<String, BTreeMap<String, BackupFile>>>,
 }
 struct Prepared {
     instance: Instance,
     old: Vec<u8>,
     new: Vec<u8>,
     state: ManagedState,
+    configs: Vec<ConfigEdit>,
+}
+impl Prepared {
+    fn changed(&self) -> bool {
+        self.old != self.new || self.configs.iter().any(|edit| edit.before != edit.after)
+    }
 }
 
 struct MutationLock(PathBuf);
@@ -237,7 +247,11 @@ impl ApplyCoordinator {
                         return Err(err(plan.conflicts.join("; ")));
                     }
                     let new = render_options(&document, &plan);
-                    Ok::<_, ApplyError>((old, new, plan.next_state))
+                    let effective = parse_options(&new).map_err(err)?;
+                    let configs =
+                        prepare_local(instance.options_path.parent().unwrap(), &effective.bindings)
+                            .map_err(err)?;
+                    Ok::<_, ApplyError>((old, new, plan.next_state, configs))
                 })();
                 match result {
                     Ok(value) => maybe = Some(value),
@@ -252,8 +266,8 @@ impl ApplyCoordinator {
                 });
                 continue;
             }
-            let (old, new, next_state) = maybe.unwrap();
-            let changed = old != new;
+            let (old, new, next_state, configs) = maybe.unwrap();
+            let changed = old != new || configs.iter().any(|edit| edit.before != edit.after);
             let status = if !changed {
                 "unchanged"
             } else if self.running(&instance) {
@@ -266,12 +280,13 @@ impl ApplyCoordinator {
                 status: status.into(),
                 detail: String::new(),
             });
-            if status != "deferred" && (changed || state.get(&instance.id) != Some(&next_state)) {
+            if status != "deferred" {
                 prepared.push(Prepared {
                     instance,
                     old,
                     new,
                     state: next_state,
+                    configs,
                 });
             }
         }
@@ -286,6 +301,43 @@ impl ApplyCoordinator {
     pub fn preview(&self, profile: &Profile) -> Result<ApplyPreview, ApplyError> {
         self.guard()?;
         Ok(self.prepare(profile, &self.managed()?)?.1)
+    }
+    fn validate_prepared(&self, prepared: &[Prepared], applied: bool) -> Result<(), ApplyError> {
+        let instances = discover_instances(&self.root).map_err(err)?;
+        if instances.len() != prepared.len() {
+            return Err(err("launcher instances changed during apply"));
+        }
+        for instance in instances {
+            let item = prepared
+                .iter()
+                .find(|item| item.instance.id == instance.id)
+                .ok_or_else(|| err("launcher instances changed during apply"))?;
+            if instance.problem.is_some() || instance.options_path != item.instance.options_path {
+                return Err(err("unsafe or changed instance during apply"));
+            }
+            let expected = if applied { &item.new } else { &item.old };
+            if fs::read(&instance.options_path).map_err(err)? != *expected {
+                return Err(err("options changed during apply"));
+            }
+            let configs =
+                prepare_local(instance.options_path.parent().unwrap(), &Default::default())
+                    .map_err(err)?;
+            if configs.len() != item.configs.len() {
+                return Err(err("Standard Settings files changed during apply"));
+            }
+            for config in configs {
+                let edit = item
+                    .configs
+                    .iter()
+                    .find(|edit| edit.path == config.path)
+                    .ok_or_else(|| err("Standard Settings files changed during apply"))?;
+                let expected = if applied { &edit.after } else { &edit.before };
+                if config.before != *expected {
+                    return Err(err("Standard Settings contents changed during apply"));
+                }
+            }
+        }
+        Ok(())
     }
     pub fn apply(
         &self,
@@ -374,7 +426,12 @@ impl ApplyCoordinator {
         if !install && history.profile.as_ref() != Some(profile) {
             return Err(err("reconciliation profile differs from installed profile"));
         }
-        if prepared.is_empty() && !install {
+        if !install
+            && prepared
+                .iter()
+                .all(|item| !item.changed() && state.get(&item.instance.id) == Some(&item.state))
+        {
+            self.validate_prepared(&prepared, false)?;
             self.write(
                 &self.state.join("mutation.json"),
                 &serde_json::json!({"operation":"apply","backup_id":history.head}),
@@ -415,28 +472,53 @@ impl ApplyCoordinator {
         for item in &prepared {
             post_state.insert(item.instance.id.clone(), item.state.clone());
         }
+        self.validate_prepared(&prepared, false)?;
         let mut files = BTreeMap::new();
-        for instance in discover_instances(&self.root).map_err(err)? {
-            if instance.problem.is_some() {
-                return Err(err("unsafe instance before backup"));
-            }
-            let old = fs::read(&instance.options_path).map_err(err)?;
-            let after = prepared
-                .iter()
-                .find(|p| p.instance.id == instance.id)
-                .map_or(old.as_slice(), |p| p.new.as_slice());
-            atomic_replace(&backup_dir.join(format!("{}.txt", instance.id)), &old, true)
+        let mut mod_files = BTreeMap::new();
+        let mod_dir = backup_dir.join("mod-configs");
+        fs::create_dir(&mod_dir).map_err(err)?;
+        fs::set_permissions(&mod_dir, fs::Permissions::from_mode(0o700)).map_err(err)?;
+        for item in &prepared {
+            let instance = &item.instance;
+            atomic_replace(
+                &backup_dir.join(format!("{}.txt", instance.id)),
+                &item.old,
+                true,
+            )
+            .map_err(err)?;
+            let mut configs = BTreeMap::new();
+            for edit in &item.configs {
+                let kind = mod_kind(instance.options_path.parent().unwrap(), &edit.path)?;
+                atomic_replace(
+                    &mod_dir.join(format!("{}.{kind}.txt", instance.id)),
+                    &edit.before,
+                    true,
+                )
                 .map_err(err)?;
+                configs.insert(
+                    kind.to_string(),
+                    BackupFile {
+                        relative: edit
+                            .path
+                            .strip_prefix(&self.root)
+                            .map_err(err)?
+                            .to_path_buf(),
+                        before_hash: hash(&edit.before),
+                        after_hash: hash(&edit.after),
+                    },
+                );
+            }
+            mod_files.insert(instance.id.clone(), configs);
             files.insert(
-                instance.id,
+                instance.id.clone(),
                 BackupFile {
                     relative: instance
                         .options_path
                         .strip_prefix(&self.root)
                         .map_err(err)?
                         .to_path_buf(),
-                    before_hash: hash(&old),
-                    after_hash: hash(after),
+                    before_hash: hash(&item.old),
+                    after_hash: hash(&item.new),
                 },
             );
         }
@@ -448,7 +530,9 @@ impl ApplyCoordinator {
             prior_history: history.clone(),
             profile: profile.clone(),
             keyd_after: vec![],
+            mod_files: Some(mod_files),
         };
+        sync_dir(&mod_dir).map_err(err)?;
         self.write(&backup_dir.join("manifest.json"), &manifest)?;
         sync_dir(&backup_dir).map_err(err)?;
         sync_dir(&backups).map_err(err)?;
@@ -459,12 +543,14 @@ impl ApplyCoordinator {
         let had_managed = record_present(&self.state.join("managed.json"))?;
         let had_lineage = record_present(&self.state.join("lineage.json"))?;
         let mut installed = false;
-        let mut touched: Vec<&Prepared> = Vec::new();
+        let mut touched: Vec<(&Path, &[u8], &[u8])> = Vec::new();
         let operation = (|| {
+            self.validate_prepared(&prepared, false)?;
             if install {
                 keyd.install(profile).map_err(err)?;
                 installed = true;
             }
+            self.validate_prepared(&prepared, false)?;
             for item in &prepared {
                 if item.old != item.new {
                     if fs::read(&item.instance.options_path).map_err(err)? != item.old {
@@ -472,10 +558,28 @@ impl ApplyCoordinator {
                     }
                     // A failed directory sync can occur after the rename, so include
                     // the attempted write in rollback before making the call.
-                    touched.push(item);
+                    touched.push((&item.instance.options_path, &item.old, &item.new));
                     atomic_replace(&item.instance.options_path, &item.new, false).map_err(err)?;
                 }
+                for edit in &item.configs {
+                    if edit.before != edit.after {
+                        let current = prepare_local(
+                            item.instance.options_path.parent().unwrap(),
+                            &Default::default(),
+                        )
+                        .map_err(err)?;
+                        if !current
+                            .iter()
+                            .any(|config| config.path == edit.path && config.before == edit.before)
+                        {
+                            return Err(err("Standard Settings changed during apply"));
+                        }
+                        touched.push((&edit.path, &edit.before, &edit.after));
+                        atomic_replace(&edit.path, &edit.after, false).map_err(err)?;
+                    }
+                }
             }
+            self.validate_prepared(&prepared, true)?;
             self.write(&self.state.join("managed.json"), &manifest.post_state)?;
             manifest.keyd_after = keyd.checkpoint().map_err(err)?;
             self.write(&backup_dir.join("manifest.json"), &manifest)?;
@@ -490,6 +594,7 @@ impl ApplyCoordinator {
             )?;
             remove_record(&self.state.join("pending.json")).map_err(err)?;
             publish(profile)?;
+            self.validate_prepared(&prepared, true)?;
             sync_dir(&self.state).map_err(err)?;
             // Unlink last. A crash can resurrect a marker, but cannot erase it before
             // every published record and directory is durable.
@@ -497,16 +602,27 @@ impl ApplyCoordinator {
         })();
         if let Err(e) = operation {
             let mut rollback_errors = Vec::new();
-            for item in touched.into_iter().rev() {
+            for (path, old, new) in touched.into_iter().rev() {
                 let result = (|| {
-                    let current = fs::read(&item.instance.options_path).map_err(err)?;
-                    if current == item.old {
+                    // Recheck config ancestors before rollback as well as forward writes.
+                    if let Some(item) = prepared
+                        .iter()
+                        .find(|item| item.configs.iter().any(|edit| edit.path == path))
+                    {
+                        prepare_local(
+                            item.instance.options_path.parent().unwrap(),
+                            &Default::default(),
+                        )
+                        .map_err(err)?;
+                    }
+                    let current = fs::read(path).map_err(err)?;
+                    if current == old {
                         return Ok(());
                     }
-                    if current != item.new {
-                        return Err(err("changed options during apply rollback"));
+                    if current != new {
+                        return Err(err("changed managed file during apply rollback"));
                     }
-                    atomic_replace(&item.instance.options_path, &item.old, false).map_err(err)
+                    atomic_replace(path, old, false).map_err(err)
                 })();
                 if let Err(error) = result {
                     rollback_errors.push(error.0);
@@ -640,6 +756,9 @@ impl ApplyCoordinator {
                     return Err(err("changed parent backup lineage"));
                 }
             }
+            // Mod configs can drift independently between applies. Validate each
+            // generation against its own snapshot so a repair remains reversible.
+            // Restoring the parent still checks its own after hashes below.
             parent.files
         } else {
             if !prior.keyd.is_empty() || !manifest.prior_state.is_empty() {
@@ -651,8 +770,9 @@ impl ApplyCoordinator {
         if instances.len() != manifest.files.len() {
             return Err(err("changed launcher instances"));
         }
+        let mod_restores = self.restore_mods(&manifest, &backup_dir, &instances)?;
         let mut restores = vec![];
-        for instance in instances {
+        for instance in &instances {
             let file = manifest
                 .files
                 .get(&instance.id)
@@ -685,17 +805,37 @@ impl ApplyCoordinator {
                     return Err(err("backup options do not match prior profile"));
                 }
             }
-            restores.push((instance.id, target, before));
+            restores.push((instance.id.clone(), target, before));
         }
         before()?;
+        // Hooks can have side effects; do not overwrite files changed since preflight.
+        let validate = || {
+            if discover_instances(&self.root).map_err(err)? != instances {
+                return Err(err("changed launcher instances during restore"));
+            }
+            for (id, target, _) in &restores {
+                if hash(&fs::read(target).map_err(err)?) != manifest.files[id].after_hash {
+                    return Err(err("changed options during restore"));
+                }
+            }
+            if self.restore_mods(&manifest, &backup_dir, &instances)? != mod_restores {
+                return Err(err("changed Standard Settings during restore"));
+            }
+            Ok(())
+        };
+        validate()?;
         self.write(
             &self.state.join("mutation.json"),
             &serde_json::json!({"operation":"restore","backup_id":backup_id}),
         )?;
         let operation = (|| {
             keyd.restore_to(&prior.keyd).map_err(err)?;
+            validate()?;
             for (_, target, before) in &restores {
                 atomic_replace(target, before, false).map_err(err)?;
+            }
+            for edit in &mod_restores {
+                atomic_replace(&edit.path, &edit.after, false).map_err(err)?;
             }
             self.write(&self.state.join("managed.json"), &manifest.prior_state)?;
             self.write(&self.state.join("lineage.json"), prior)?;
@@ -724,6 +864,66 @@ impl ApplyCoordinator {
             keyd_error: None,
             restored_profile: prior.profile.clone(),
         })
+    }
+    fn restore_mods(
+        &self,
+        manifest: &Manifest,
+        backup_dir: &Path,
+        instances: &[Instance],
+    ) -> Result<Vec<ConfigEdit>, ApplyError> {
+        let Some(mod_files) = &manifest.mod_files else {
+            return Ok(vec![]);
+        };
+        if !mod_files.keys().eq(manifest.files.keys()) {
+            return Err(err("changed Standard Settings backup instance set"));
+        }
+        let mut restores = vec![];
+        for instance in instances {
+            let files = mod_files
+                .get(&instance.id)
+                .ok_or_else(|| err("missing Standard Settings backup instance"))?;
+            let game = instance.options_path.parent().unwrap();
+            let configs = prepare_local(game, &Default::default()).map_err(err)?;
+            if configs.len() != files.len() {
+                return Err(err("changed Standard Settings file set"));
+            }
+            if !configs.is_empty() {
+                private_dir(&backup_dir.join("mod-configs")).map_err(err)?;
+            }
+            for config in configs {
+                let kind = mod_kind(game, &config.path)?;
+                let file = files
+                    .get(kind)
+                    .ok_or_else(|| err("changed Standard Settings file set"))?;
+                if self.root.join(&file.relative) != config.path {
+                    return Err(err("unsafe Standard Settings restore path"));
+                }
+                let before = safe_record(
+                    &backup_dir
+                        .join("mod-configs")
+                        .join(format!("{}.{kind}.txt", instance.id)),
+                )
+                .map_err(err)?;
+                if hash(&before) != file.before_hash || hash(&config.before) != file.after_hash {
+                    return Err(err("changed Standard Settings or backup contents"));
+                }
+                restores.push(ConfigEdit {
+                    path: config.path,
+                    before: config.before,
+                    after: before,
+                });
+            }
+        }
+        Ok(restores)
+    }
+}
+fn mod_kind(game: &Path, path: &Path) -> Result<&'static str, ApplyError> {
+    if path == game.join("config/mcsr/standardsettings.json") {
+        Ok("json")
+    } else if path == game.join("config/standardoptions.txt") {
+        Ok("legacy")
+    } else {
+        Err(err("unknown Standard Settings target"))
     }
 }
 fn valid_id(id: &str) -> bool {
