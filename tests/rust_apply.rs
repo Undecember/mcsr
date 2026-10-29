@@ -717,3 +717,421 @@ fn idempotent_apply_still_publishes_runtime_state_under_marker() {
     assert!(called.get());
     assert!(!f.state().join("mutation.json").exists());
 }
+
+fn standard_file(options: &std::path::Path, relative: &str, bytes: &[u8]) -> PathBuf {
+    let path = options.parent().unwrap().join(relative);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, bytes).unwrap();
+    path
+}
+
+#[test]
+fn standard_settings_sync_effective_controls_and_restore_exact_bytes() {
+    let f = Fixture::new();
+    let options = f.instance("one", b"key_key.back:key.keyboard.s\r\nkey_key.forward:key.keyboard.w\r\nkey_key.chat:key.keyboard.t\r\n");
+    let original_json = br#"{ "key_key.back":"key.keyboard.s", "key_key.forward":{"enabled":true,"value":"key.keyboard.w","extra":42}, "key_key.chat":"key.keyboard.t", "key_key.jump":{"enabled":false,"value":"key.keyboard.space"}, "resetOnWorldCreation":false, "other":17 }"#;
+    let json = standard_file(&options, "config/mcsr/standardsettings.json", original_json);
+    let p = parse_profile(br#"{"crafting":{"s":"k"},"controls":{"key_key.forward":"u"},"chat":{"open_chat":"enter","send":"enter"}}"#, &KeySet::fallback()).unwrap();
+    let keyd = FakeKeyd::default();
+    let c = f.coordinator(vec![]);
+    let report = c.apply(&p, &keyd).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&json).unwrap()).unwrap();
+    assert_eq!(value["key_key.back"], "key.keyboard.k");
+    assert_eq!(value["key_key.forward"]["value"], "key.keyboard.u");
+    assert_eq!(value["key_key.forward"]["extra"], 42);
+    assert_eq!(value["key_key.chat"], "key.keyboard.enter");
+    assert_eq!(
+        value["key_key.jump"],
+        serde_json::json!({"enabled":false,"value":"key.keyboard.space"})
+    );
+    assert_eq!(value["resetOnWorldCreation"], false);
+    assert_eq!(value["other"], 17);
+    c.restore(report.backup_id.as_deref().unwrap(), &keyd)
+        .unwrap();
+    assert_eq!(fs::read(json).unwrap(), original_json);
+    assert_eq!(fs::read(options).unwrap(), b"key_key.back:key.keyboard.s\r\nkey_key.forward:key.keyboard.w\r\nkey_key.chat:key.keyboard.t\r\n");
+}
+
+#[test]
+fn standard_legacy_preserves_crlf_disabled_and_restores_original() {
+    let f = Fixture::new();
+    let options = f.instance("one", original());
+    let before = b"# keep\r\nkey_key.back:key.keyboard.s\r\nkey_key.jump:\r\ngamma:0.7\r\n";
+    let legacy = standard_file(&options, "config/standardoptions.txt", before);
+    let keyd = FakeKeyd::default();
+    let c = f.coordinator(vec![]);
+    let report = c.apply(&profile("k"), &keyd).unwrap();
+    assert_eq!(
+        fs::read(&legacy).unwrap(),
+        b"# keep\r\nkey_key.back:key.keyboard.k\r\nkey_key.jump:\r\ngamma:0.7\r\n"
+    );
+    c.restore(report.backup_id.as_deref().unwrap(), &keyd)
+        .unwrap();
+    assert_eq!(fs::read(legacy).unwrap(), before);
+}
+
+#[test]
+fn stale_standard_settings_are_repaired_even_when_options_are_current() {
+    let f = Fixture::new();
+    let options = f.instance("one", b"key_key.back:key.keyboard.k\n");
+    let json = standard_file(
+        &options,
+        "config/mcsr/standardsettings.json",
+        br#"{"key_key.back":"key.keyboard.s"}"#,
+    );
+    let keyd = FakeKeyd::default();
+    let c = f.coordinator(vec![]);
+    let first = c.apply(&profile("k"), &keyd).unwrap();
+    assert_eq!(status(&first, "one"), "updated");
+    assert!(first.backup_id.is_some());
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&json).unwrap()).unwrap();
+    assert_eq!(value["key_key.back"], "key.keyboard.k");
+    let second = c.apply(&profile("k"), &keyd).unwrap();
+    assert!(second.backup_id.is_none());
+}
+
+#[test]
+fn missing_standard_configs_stay_absent() {
+    let f = Fixture::new();
+    let options = f.instance("one", original());
+    f.coordinator(vec![])
+        .apply(&profile("k"), &FakeKeyd::default())
+        .unwrap();
+    assert!(!options
+        .parent()
+        .unwrap()
+        .join("config/mcsr/standardsettings.json")
+        .exists());
+    assert!(!options
+        .parent()
+        .unwrap()
+        .join("config/standardoptions.txt")
+        .exists());
+}
+
+#[test]
+fn running_instance_defers_mod_only_change_for_all_instances() {
+    let f = Fixture::new();
+    let one = f.instance("one", b"key_key.back:key.keyboard.k\n");
+    let two = f.instance("two", original());
+    let json = standard_file(
+        &one,
+        "config/mcsr/standardsettings.json",
+        br#"{"key_key.back":"key.keyboard.s"}"#,
+    );
+    let keyd = FakeKeyd::default();
+    let report = f
+        .coordinator(vec![one.parent().unwrap().to_path_buf()])
+        .apply(&profile("k"), &keyd)
+        .unwrap();
+    assert_eq!(status(&report, "one"), "deferred");
+    assert_eq!(status(&report, "two"), "deferred");
+    assert_eq!(fs::read(two).unwrap(), original());
+    assert_eq!(
+        fs::read(json).unwrap(),
+        br#"{"key_key.back":"key.keyboard.s"}"#
+    );
+    assert_eq!(keyd.installs.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn invalid_or_shared_standard_config_blocks_entire_apply() {
+    use std::os::unix::fs::symlink;
+    for kind in ["malformed", "symlink", "modern_redirect", "legacy_redirect"] {
+        let f = Fixture::new();
+        let one = f.instance("one", original());
+        let two = f.instance("two", original());
+        let shared = f.base.join("shared.txt");
+        fs::write(&shared, b"shared sentinel").unwrap();
+        match kind {
+            "malformed" => {
+                standard_file(&two, "config/mcsr/standardsettings.json", b"{");
+            }
+            "symlink" => {
+                let path = two
+                    .parent()
+                    .unwrap()
+                    .join("config/mcsr/standardsettings.json");
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                symlink(&shared, path).unwrap();
+            }
+            "modern_redirect" => {
+                standard_file(
+                    &two,
+                    "config/mcsr/standardsettings.global",
+                    shared.to_str().unwrap().as_bytes(),
+                );
+            }
+            "legacy_redirect" => {
+                standard_file(
+                    &two,
+                    "config/standardoptions.txt",
+                    shared.to_str().unwrap().as_bytes(),
+                );
+            }
+            _ => unreachable!(),
+        }
+        let keyd = FakeKeyd::default();
+        let result = f.coordinator(vec![]).apply(&profile("k"), &keyd);
+        assert!(
+            result.is_err() || status(result.as_ref().unwrap(), "two") == "failed",
+            "{kind}"
+        );
+        assert_eq!(fs::read(one).unwrap(), original(), "{kind}");
+        assert_eq!(fs::read(two).unwrap(), original(), "{kind}");
+        assert_eq!(fs::read(shared).unwrap(), b"shared sentinel", "{kind}");
+        assert_eq!(keyd.installs.load(Ordering::Relaxed), 0, "{kind}");
+    }
+}
+
+#[test]
+fn changed_standard_file_rejects_restore_before_any_mutation() {
+    let f = Fixture::new();
+    let options = f.instance("one", original());
+    let json = standard_file(
+        &options,
+        "config/mcsr/standardsettings.json",
+        br#"{"key_key.back":"key.keyboard.s"}"#,
+    );
+    let keyd = FakeKeyd::default();
+    let c = f.coordinator(vec![]);
+    let report = c.apply(&profile("k"), &keyd).unwrap();
+    fs::write(&json, br#"{"key_key.back":"key.keyboard.x"}"#).unwrap();
+    let options_before = fs::read(&options).unwrap();
+    let checkpoint = keyd.checkpoint().unwrap();
+    assert!(c
+        .restore(report.backup_id.as_deref().unwrap(), &keyd)
+        .is_err());
+    assert_eq!(fs::read(options).unwrap(), options_before);
+    assert_eq!(
+        fs::read(json).unwrap(),
+        br#"{"key_key.back":"key.keyboard.x"}"#
+    );
+    assert_eq!(keyd.checkpoint().unwrap(), checkpoint);
+    assert!(!f.state().join("mutation.json").exists());
+}
+
+#[test]
+fn standard_settings_restore_two_generations_in_lifo_order() {
+    let f = Fixture::new();
+    let options = f.instance("one", original());
+    let before = br#"{"key_key.back":"key.keyboard.s"}"#;
+    let json = standard_file(&options, "config/mcsr/standardsettings.json", before);
+    let keyd = FakeKeyd::default();
+    let c = f.coordinator(vec![]);
+    let first = c.apply(&profile("k"), &keyd).unwrap();
+    let after_first = fs::read(&json).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&after_first).unwrap();
+    assert_eq!(value["key_key.back"], "key.keyboard.k");
+    let second = c.apply(&profile("j"), &keyd).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&json).unwrap()).unwrap();
+    assert_eq!(value["key_key.back"], "key.keyboard.j");
+    assert!(c
+        .restore(first.backup_id.as_deref().unwrap(), &keyd)
+        .is_err());
+    c.restore(second.backup_id.as_deref().unwrap(), &keyd)
+        .unwrap();
+    assert_eq!(fs::read(&json).unwrap(), after_first);
+    c.restore(first.backup_id.as_deref().unwrap(), &keyd)
+        .unwrap();
+    assert_eq!(fs::read(json).unwrap(), before);
+    assert_eq!(fs::read(options).unwrap(), original());
+}
+
+#[test]
+fn reconciliation_syncs_and_restores_new_instance_standard_settings() {
+    let f = Fixture::new();
+    f.instance("one", original());
+    let keyd = FakeKeyd::default();
+    let c = f.coordinator(vec![]);
+    c.apply(&profile("k"), &keyd).unwrap();
+    let two = f.instance("two", original());
+    let before = br#"{"key_key.back":"key.keyboard.s"}"#;
+    let json = standard_file(&two, "config/mcsr/standardsettings.json", before);
+    let report = c.reconcile_new_instances(&profile("k"), &keyd).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(&json).unwrap()).unwrap();
+    assert_eq!(value["key_key.back"], "key.keyboard.k");
+    c.restore(report.backup_id.as_deref().unwrap(), &keyd)
+        .unwrap();
+    assert_eq!(fs::read(json).unwrap(), before);
+    assert_eq!(fs::read(two).unwrap(), original());
+}
+
+#[test]
+fn standard_file_rolls_back_with_options_when_publication_fails() {
+    let f = Fixture::new();
+    let options = f.instance("one", original());
+    let before = br#"{"key_key.back":"key.keyboard.s"}"#;
+    let json = standard_file(&options, "config/mcsr/standardsettings.json", before);
+    let keyd = FakeKeyd::default();
+    let seen = std::cell::Cell::new(false);
+    let result = f
+        .coordinator(vec![])
+        .apply_with_publish(&profile("k"), &keyd, &|_| {
+            let value: serde_json::Value =
+                serde_json::from_slice(&fs::read(&json).unwrap()).unwrap();
+            seen.set(value["key_key.back"] == "key.keyboard.k");
+            Err(mcsr_toolkit::apply::ApplyError("publication failed".into()))
+        });
+    assert!(result.is_err());
+    assert!(
+        seen.get(),
+        "standard config must be staged before publication"
+    );
+    assert_eq!(fs::read(options).unwrap(), original());
+    assert_eq!(fs::read(json).unwrap(), before);
+}
+
+#[test]
+fn restore_accepts_options_only_manifest_and_leaves_later_config_alone() {
+    let f = Fixture::new();
+    let options = f.instance("one", original());
+    let keyd = FakeKeyd::default();
+    let c = f.coordinator(vec![]);
+    let report = c.apply(&profile("k"), &keyd).unwrap();
+    let id = report.backup_id.as_deref().unwrap();
+    let manifest_path = f.state().join("backups").join(id).join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest.as_object_mut().unwrap().retain(|key, _| {
+        [
+            "launcher_root",
+            "files",
+            "prior_state",
+            "post_state",
+            "prior_history",
+            "profile",
+            "keyd_after",
+        ]
+        .contains(&key.as_str())
+    });
+    fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let added = br#"{"key_key.back":"key.keyboard.z"}"#;
+    let json = standard_file(&options, "config/mcsr/standardsettings.json", added);
+    c.restore(id, &keyd).unwrap();
+    assert_eq!(fs::read(options).unwrap(), original());
+    assert_eq!(fs::read(json).unwrap(), added);
+}
+
+#[test]
+fn restore_rejects_added_or_removed_standard_config_before_mutation() {
+    for added in [false, true] {
+        let f = Fixture::new();
+        let options = f.instance("one", original());
+        let config = options
+            .parent()
+            .unwrap()
+            .join("config/mcsr/standardsettings.json");
+        if !added {
+            standard_file(
+                &options,
+                "config/mcsr/standardsettings.json",
+                br#"{"key_key.back":"key.keyboard.s"}"#,
+            );
+        }
+        let keyd = FakeKeyd::default();
+        let c = f.coordinator(vec![]);
+        let report = c.apply(&profile("k"), &keyd).unwrap();
+        if added {
+            standard_file(
+                &options,
+                "config/mcsr/standardsettings.json",
+                br#"{"key_key.back":"key.keyboard.z"}"#,
+            );
+        } else {
+            fs::remove_file(&config).unwrap();
+        }
+        let applied_options = fs::read(&options).unwrap();
+        let checkpoint = keyd.checkpoint().unwrap();
+        assert!(
+            c.restore(report.backup_id.as_deref().unwrap(), &keyd)
+                .is_err(),
+            "added={added}"
+        );
+        assert_eq!(fs::read(&options).unwrap(), applied_options);
+        assert_eq!(keyd.checkpoint().unwrap(), checkpoint);
+        assert_eq!(config.exists(), added);
+        assert!(!f.state().join("mutation.json").exists());
+    }
+}
+
+#[test]
+fn restore_preserves_config_edited_during_keyd_restore() {
+    struct EditingRestore<'a> {
+        keyd: &'a FakeKeyd,
+        config: PathBuf,
+    }
+    impl KeydAdapter for EditingRestore<'_> {
+        fn install(&self, profile: &Profile) -> Result<(), String> {
+            self.keyd.install(profile)
+        }
+        fn checkpoint(&self) -> Result<Vec<String>, String> {
+            self.keyd.checkpoint()
+        }
+        fn restore_to(&self, checkpoint: &[String]) -> Result<(), String> {
+            fs::write(&self.config, br#"{"key_key.back":"key.keyboard.x"}"#)
+                .map_err(|error| error.to_string())?;
+            self.keyd.restore_to(checkpoint)
+        }
+        fn rollback(&self) -> Result<(), String> {
+            self.keyd.rollback()
+        }
+    }
+    let f = Fixture::new();
+    let options = f.instance("one", original());
+    let config = standard_file(
+        &options,
+        "config/mcsr/standardsettings.json",
+        br#"{"key_key.back":"key.keyboard.s"}"#,
+    );
+    let keyd = FakeKeyd::default();
+    let coordinator = f.coordinator(vec![]);
+    let report = coordinator.apply(&profile("k"), &keyd).unwrap();
+    let applied_options = fs::read(&options).unwrap();
+    let editing = EditingRestore {
+        keyd: &keyd,
+        config: config.clone(),
+    };
+    assert!(coordinator
+        .restore(report.backup_id.as_deref().unwrap(), &editing)
+        .is_err());
+    assert_eq!(fs::read(options).unwrap(), applied_options);
+    assert_eq!(
+        fs::read(config).unwrap(),
+        br#"{"key_key.back":"key.keyboard.x"}"#
+    );
+    assert!(f.state().join("mutation.json").exists());
+}
+
+#[test]
+fn restoring_repair_backup_preserves_mod_edits_between_applies() {
+    let f = Fixture::new();
+    let options = f.instance("one", original());
+    let config = standard_file(
+        &options,
+        "config/mcsr/standardsettings.json",
+        br#"{"key_key.back":"key.keyboard.s"}"#,
+    );
+    let keyd = FakeKeyd::default();
+    let coordinator = f.coordinator(vec![]);
+    let first = coordinator.apply(&profile("k"), &keyd).unwrap();
+    let external = br#"{ "key_key.back": "key.keyboard.x", "gamma": 0.7 }"#;
+    fs::write(&config, external).unwrap();
+    let repair = coordinator
+        .reconcile_new_instances(&profile("k"), &keyd)
+        .unwrap();
+    assert_eq!(status(&repair, "one"), "updated");
+    let repaired: serde_json::Value = serde_json::from_slice(&fs::read(&config).unwrap()).unwrap();
+    assert_eq!(repaired["key_key.back"], "key.keyboard.k");
+    coordinator
+        .restore(repair.backup_id.as_deref().unwrap(), &keyd)
+        .unwrap();
+    assert_eq!(fs::read(&config).unwrap(), external);
+    assert_eq!(keyd.installs.load(Ordering::Relaxed), 1);
+    assert!(!f.state().join("mutation.json").exists());
+    // The older snapshot still cannot overwrite the independently edited contents.
+    assert!(coordinator
+        .restore(first.backup_id.as_deref().unwrap(), &keyd)
+        .is_err());
+    assert_eq!(fs::read(&config).unwrap(), external);
+}

@@ -1,5 +1,6 @@
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -65,11 +66,8 @@ export default class McsrToolkitExtension extends Extension {
 
     disable() {
         this._sendEvent('', '', true);
-        for (const [source, invocation] of this._resizeRequests ?? []) {
-            GLib.source_remove(source);
-            invocation.return_dbus_error('org.mcsr.Toolkit.Disabled', 'extension disabled');
-        }
-        this._resizeRequests?.clear();
+        for (const request of this._resizeRequests?.values() ?? [])
+            this._finishResize(request, 'extension disabled', null, 'org.mcsr.Toolkit.Disabled');
         if (this._retry)
             GLib.source_remove(this._retry);
         for (const name of this._bindings ?? [])
@@ -303,6 +301,8 @@ export default class McsrToolkitExtension extends Extension {
     }
 
     _sendFocus() {
+        for (const request of this._resizeRequests?.values() ?? [])
+            this._resizeAllowed(request);
         this._syncPresetBindings();
         const window = global.display.focus_window;
         this._sendEvent(window?.get_wm_class() ?? '', window?.get_title() ?? '',
@@ -314,6 +314,166 @@ export default class McsrToolkitExtension extends Extension {
         const rect = window?.get_frame_rect();
         return [window?.get_wm_class() ?? '', window?.get_title() ?? '',
             rect?.width ?? 0, rect?.height ?? 0, Main.modalCount > 0];
+    }
+
+    _finishResize(request, error = null, dimensions = null,
+        errorName = 'org.mcsr.Toolkit.ResizeFailed') {
+        if (request.done)
+            return;
+        request.done = true;
+        if (request.timer)
+            GLib.source_remove(request.timer);
+        request.timer = 0;
+        if (request.process) {
+            request.process.force_exit();
+            request.process = null;
+        }
+        if (request.unmanagedSignal)
+            request.window.disconnect(request.unmanagedSignal);
+        this._resizeRequests.delete(request);
+        if (error)
+            request.invocation.return_dbus_error(errorName, error);
+        else
+            request.invocation.return_value(new GLib.Variant('(uu)', dimensions));
+    }
+
+    _resizeAllowed(request) {
+        if (request.done)
+            return false;
+        if (minecraftWindow() !== request.window) {
+            this._finishResize(request, 'Minecraft focus lost or Shell modal opened during resize');
+            return false;
+        }
+        if (request.window.is_fullscreen()) {
+            this._finishResize(request, 'Leave fullscreen using Minecraft’s own fullscreen control (usually F11), then retry');
+            return false;
+        }
+        if (GLib.get_monotonic_time() >= request.deadline) {
+            let observed = '';
+            try {
+                const frame = request.window.get_frame_rect();
+                const content = request.window.get_client_content_rect();
+                observed = ` (frame ${frame.width}x${frame.height} at ${frame.x},${frame.y}, requested position ${request.x},${request.y}, content ${content.width}x${content.height}, decorated ${request.window.decorated}, fullscreen ${request.window.is_fullscreen()}, maximized ${request.window.get_maximize_flags()})`;
+            } catch (_) {}
+            this._finishResize(request, `Minecraft borderless resize timed out${observed}`);
+            return false;
+        }
+        return true;
+    }
+
+    _prepareBorderless(request) {
+        const window = request.window;
+        if (!this._resizeAllowed(request))
+            return;
+        if (!window.decorated) {
+            request.prepared = true;
+            return;
+        }
+        if (window.get_client_type() !== Meta.WindowClientType.X11) {
+            this._finishResize(request, 'Native Wayland decorations cannot be removed; use client-side borderless support or an XWayland game');
+            return;
+        }
+        // MetaWindowXwayland inherits the runtime X11 subclass property, which
+        // is not part of the introspected Meta.Window prototype.
+        let xid;
+        try {
+            const value = new GObject.Value();
+            value.init(GObject.TYPE_ULONG);
+            window.get_property('xwindow', value);
+            xid = value.get_ulong();
+        } catch (_) {
+            this._finishResize(request, 'Minecraft X11 client window ID is unavailable');
+            return;
+        }
+        if (!Number.isInteger(xid) || xid <= 0 || xid > 0xffffffff) {
+            this._finishResize(request, 'Minecraft X11 client window ID is unavailable');
+            return;
+        }
+        const xprop = GLib.find_program_in_path('xprop');
+        if (!xprop) {
+            this._finishResize(request, 'xprop is required for XWayland borderless resize; install x11-utils');
+            return;
+        }
+        if (!this._resizeAllowed(request))
+            return;
+        try {
+            const process = Gio.Subprocess.new([xprop, '-id', `0x${xid.toString(16)}`,
+                '-f', '_MOTIF_WM_HINTS', '32c', '-set', '_MOTIF_WM_HINTS',
+                '2, 0, 0, 0, 0'], Gio.SubprocessFlags.NONE);
+            request.process = process;
+            process.wait_check_async(null, (proc, result) => {
+                if (request.done)
+                    return;
+                request.process = null;
+                try {
+                    if (!proc.wait_check_finish(result))
+                        throw new Error('xprop failed');
+                    if (!this._resizeAllowed(request))
+                        return;
+                    request.prepared = true;
+                } catch (error) {
+                    this._finishResize(request, `xprop borderless preparation failed: ${error}`);
+                }
+            });
+        } catch (error) {
+            this._finishResize(request, `could not start xprop borderless preparation: ${error}`);
+        }
+    }
+
+    _observeResize(request) {
+        if (!this._resizeAllowed(request))
+            return GLib.SOURCE_REMOVE;
+        const window = request.window;
+        try {
+            if (!request.statesRequested) {
+                request.statesRequested = true;
+                const maximized = window.get_maximize_flags();
+                if (maximized) {
+                    if (!this._resizeAllowed(request)) return GLib.SOURCE_REMOVE;
+                    window.unmaximize();
+                }
+            }
+            if (window.get_maximize_flags())
+                return GLib.SOURCE_CONTINUE;
+            if (!request.preparationStarted) {
+                request.preparationStarted = true;
+                this._prepareBorderless(request);
+            }
+            if (request.done)
+                return GLib.SOURCE_REMOVE;
+            if (!request.prepared || window.decorated)
+                return GLib.SOURCE_CONTINUE;
+            if (!request.resizeStarted) {
+                if (!this._resizeAllowed(request)) return GLib.SOURCE_REMOVE;
+                const monitorIndex = window.get_monitor();
+                const monitor = Main.layoutManager.monitors?.[monitorIndex];
+                if (!Number.isInteger(monitorIndex) || monitorIndex < 0 || !monitor ||
+                    !Number.isInteger(monitor.x) || !Number.isInteger(monitor.y) ||
+                    !Number.isInteger(monitor.width) || monitor.width <= 0 ||
+                    !Number.isInteger(monitor.height) || monitor.height <= 0) {
+                    this._finishResize(request, 'Minecraft monitor geometry is unavailable');
+                    return GLib.SOURCE_REMOVE;
+                }
+                request.x = monitor.x + Math.floor((monitor.width - request.width) / 2);
+                request.y = monitor.y + Math.floor((monitor.height - request.height) / 2);
+                if (!this._resizeAllowed(request)) return GLib.SOURCE_REMOVE;
+                request.resizeStarted = true;
+                window.move_resize_frame(true, request.x, request.y, request.width, request.height);
+                return GLib.SOURCE_CONTINUE;
+            }
+            const frame = window.get_frame_rect();
+            const content = window.get_client_content_rect();
+            if (frame.x === request.x && frame.y === request.y &&
+                frame.width === request.width && frame.height === request.height &&
+                content.width === request.width && content.height === request.height) {
+                this._finishResize(request, null, [content.width, content.height]);
+                return GLib.SOURCE_REMOVE;
+            }
+        } catch (error) {
+            this._finishResize(request, `Minecraft resize failed: ${error}`);
+            return GLib.SOURCE_REMOVE;
+        }
+        return GLib.SOURCE_CONTINUE;
     }
 
     ResizeFocusedAsync([width, height], invocation) {
@@ -332,28 +492,23 @@ export default class McsrToolkitExtension extends Extension {
             fail('a resize is already pending');
             return;
         }
+        let request;
         try {
-            const rect = window.get_frame_rect();
-            window.move_resize_frame(true, rect.x, rect.y, width, height);
+            request = {window, invocation, width, height, x: null, y: null,
+                deadline: GLib.get_monotonic_time() + 2000000, timer: 0, process: null,
+                done: false, prepared: false, statesRequested: false,
+                preparationStarted: false, resizeStarted: false};
+            this._resizeRequests.set(request, request);
+            request.unmanagedSignal = window.connect?.('unmanaged', () =>
+                this._finishResize(request, 'Minecraft window was unmanaged during resize'));
+            request.timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 25, () =>
+                this._observeResize(request));
+            this._observeResize(request);
         } catch (error) {
-            fail(`${error}`);
-            return;
+            if (request)
+                this._finishResize(request, `Minecraft resize failed: ${error}`);
+            else
+                fail(`${error}`);
         }
-        let attempts = 0;
-        const source = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 25, () => {
-            if (minecraftWindow() !== window) {
-                this._resizeRequests.delete(source);
-                fail('Minecraft focus lost during resize');
-                return GLib.SOURCE_REMOVE;
-            }
-            const applied = window.get_frame_rect();
-            if ((applied.width === width && applied.height === height) || ++attempts >= 40) {
-                this._resizeRequests.delete(source);
-                invocation.return_value(new GLib.Variant('(uu)', [applied.width, applied.height]));
-                return GLib.SOURCE_REMOVE;
-            }
-            return GLib.SOURCE_CONTINUE;
-        });
-        this._resizeRequests.set(source, invocation);
     }
 }
