@@ -1,6 +1,112 @@
 # GNOME Wayland resize and sensitivity acceptance
 
-This guide describes current observation steps for the Rust service and GNOME Shell 50 extension. It does not require enabling live keyd mappings. Run only the guided Rust installation and a service that is already installed; do not start a second service process beside the managed unit. The supervised primitive test confirmed dimensions and centering but exposed the fullscreen/focus regression recorded below; live acceptance of the corrected candidate lifecycle remains pending. A client may impose stricter size limits than Mutter.
+## Borderless full-size toggle candidate (2026-10-30)
+
+The current candidate uses windowed thin/full-size toggling as the fullscreen
+alternative selected after the latest live regression. Normal shortcuts toggle
+between their centered preset and the current monitor's full bounds. Both are
+borderless windows; no fullscreen state mutation or F11 synthesis is used.
+`ResizeFocused` remains the fixed-size operation for eye presets, while the new
+typed `ToggleResizeFocused` reply includes the verified size and full-size flag.
+An older extension that lacks the method must report an upgrade error.
+
+Applying a profile with presets prepares Minecraft `fullscreen:false` and the
+enabled equivalent in existing local Standard Settings. Check Preview's file
+details, close Minecraft for Apply, and retain its backup ID. Disabled/missing
+mod entries and missing files remain unchanged; shared configs are refused.
+Restore must return the exact pre-Apply bytes, including an original fullscreen
+preference. Older backups remain valid under their historical control checks.
+
+The supervised single-monitor XWayland run passed repeated thin/full-size
+toggles with exact 250×1080 at 835,0 and 1920×1080 at 0,0, always with the X11
+fullscreen flag off. Overview-based focus recovery, all five F3 combinations
+with both sources, chat identity, release-resume behavior, and exact cleanup
+passed. One early focus-loss cancellation was observed before successful
+repeated toggles. The default F-key map required a temporary override, and
+Alt+Tab failed because Tab → F3 also remaps its chord. See the
+[full live record](../docs/superpowers/evidence/2026-10-30-borderless-toggle-live.md).
+
+Use this checklist to extend acceptance beyond that recorded scope:
+
+1. Start the prepared instance windowed. Use B repeatedly to observe thin →
+   full-size → thin without the game or compositor becoming fullscreen.
+2. Verify no title bar/borders, exact game dimensions, and monitor position.
+   Test a monitor at a nonzero origin when available. Compositor constraints
+   must produce an error rather than a false success or fullscreen fallback.
+3. Alt+Tab away/back between toggles. Manually resize/move the window and verify
+   the next B uses observed geometry. Close/reopen the instance and repeat.
+4. Check full-size status without the thin preset falsely reported active;
+   test eye/shift-eye sizes and sensitivity restoration if configured.
+5. Verify Tab/native F3 debug combinations and chat input do not activate resize.
+   Stop/restore the profile and confirm ordinary input afterward.
+
+Multiple monitors/scales, manual geometry changes, repeated relaunch, and eye
+presets remain unvalidated live. Alt+Tab requires a routing fix; the overview
+check does not stand in for a passing Alt+Tab shortcut. The preceding native
+F11 and menu fullscreen failure is recorded in
+[the live evidence](../docs/superpowers/evidence/2026-10-29-f3-keyd/live-validation.md).
+This workflow avoids native fullscreen; that failure is not claimed fixed.
+The separate temporary F-key mapping requirement on the test host also remains
+an acceptance limitation. Do not alter the user's keyboard map implicitly.
+
+The fixed-size primitive checks below use observe-only mode. Managed keyboard shortcuts require separately authorized live keyd mode and an applied profile. Run only the guided Rust installation and its managed service; do not start a second copy. Earlier primitive checks confirmed dimensions and centering but exposed the fullscreen/focus failures recorded below. The new thin/full-size workflow still requires live acceptance. A client may impose stricter size limits than Mutter.
+
+## Managed stock-panel visibility candidate (2026-10-30)
+
+After a verified successful resize, the extension temporarily hides the stock
+GNOME Shell 50 panel when the same managed, focused, windowed, undecorated game
+window overlaps it on the panel's monitor. This includes thin, full-size, and
+fixed-size eye windows. Merely launching Minecraft does not claim panel control.
+Focus loss, overview or Shell-grab/modal entry, lock/session changes,
+minimization, close, lost overlap, decoration/fullscreen changes, routing reset,
+and disable restore normal Shell visibility policy. Returning to an eligible
+managed window reevaluates hiding. A panel hidden by normal Shell policy is not
+unconditionally shown on release.
+
+This uses the stock panel actor and GNOME's current visibility policy; panel
+layout, struts, desktop settings, and fullscreen state remain unchanged.
+Replacement panels are outside the supported scope. Missing required hooks
+leave the panel under Shell control with a bounded diagnostic. Automated
+regressions and review are recorded in
+[the panel validation record](../docs/superpowers/evidence/2026-10-30-managed-panel-validation.md).
+The installed candidate passed supervised single-monitor XWayland checks for
+thin/full-size panel hiding and usable top-edge input, overview/other-app
+restoration and return, Run-dialog restoration, and continued B toggling. Exact
+backup/keyboard cleanup was verified. One focus-loss cancellation was observed.
+See [the live record](../docs/superpowers/evidence/2026-10-30-managed-panel-live.md).
+Workspace gestures, disable/re-enable while hidden, lock/unlock, eye windows,
+and multiple monitors/scales remain pending live checks.
+
+Use this checklist for subsequent supervised runs; retain the remaining
+unvalidated cases above when reporting the accepted scope:
+
+1. Before any toolkit resize, focus Minecraft and verify ordinary panel policy.
+   Trigger a verified top-overlapping thin resize, then full-size and thin
+   again. Inspect the entire top edge: clock/battery chrome must not cover it.
+   Verify usable game input in the strip formerly occupied by the panel;
+   matching geometry or a hidden actor alone does not establish input delivery.
+2. Switch to another app through Super/overview, then return to Minecraft.
+   Check normal panel visibility while away and hiding on return. Open/close
+   the overview and a Shell dialog, then perform a workspace gesture without
+   opening the overview. Verify immediate policy restoration through each
+   transition, including a stage grab with unchanged keyboard focus.
+3. Move the managed game below the panel, minimize/restore it, and close/reopen
+   it. Check normal policy when there is no overlap or no managed window.
+   If another monitor is available, repeat there and at a nonzero origin;
+   the primary panel must remain normal for a game on another monitor.
+4. Reset routing, then resize again. Disable the extension while it owns a
+   hide and verify panel restoration; re-enable and verify a fresh successful
+   resize is required to claim the window again. Also check focus delivery
+   and B toggling after re-enabling.
+5. Record panel behavior when another app is actually fullscreen, and run
+   lock/unlock only in a supervised session. Restoration must follow current
+   GNOME policy. Finish with the normal backup/Restore and input cleanup checks.
+
+Record observed outcomes, session/extension versions, binary SHA256, game
+backend, and monitor geometry. Stage/window harness doubles do not establish
+live input regions, lock/unlock, or monitor behavior. The earlier Alt+Tab,
+temporary F-key mapping, and native-fullscreen limitations remain as recorded
+above; this panel change does not resolve them.
 
 ## Current Rust observation procedure
 
@@ -13,9 +119,10 @@ systemctl --user status mcsr-toolkit.service --no-pager
 
 The extension state must be ACTIVE, and the service must report observe-only mode. If extension installation is staged, follow the logout/login and `mcsr-toolkit repair` steps in the [README](../README.md); do not test with both `mcsr-toolkit@local` and the new UUID enabled. Open the local UI at <http://127.0.0.1:8765/>, configure normal, thin, and eye presets in the saved profile, and confirm the extension is connected. Do not enable `--enable-live-keyd` for resize observation.
 
-In a terminal, inspect focus and request a size while Minecraft is focused:
+Run this block in a terminal, then focus Minecraft during the three-second delay:
 
 ```sh
+sleep 3
 gdbus call --session --dest org.gnome.Shell --object-path /org/mcsr/Toolkit \
   --method org.mcsr.Toolkit.GetFocus
 gdbus call --session --dest org.gnome.Shell --object-path /org/mcsr/Toolkit \
@@ -34,7 +141,7 @@ Observe extension signals in another terminal:
 gdbus monitor --session --dest org.gnome.Shell --object-path /org/mcsr/Toolkit
 ```
 
-With shortcuts configured through the UI, repeatedly transition through normal, thin, and eye shortcuts, then use the shifted eye shortcut. Confirm each resulting game area and the continued absence of borders. Alt+Tab away and back after each transition; exact geometry alone is not a pass. Entering fullscreen while preparation or observation is pending must cancel further mutations. Expected `PresetActivated` payloads are `('normal', false)`, `('eye', false)`, and `('eye', true)`. Repeat with the terminal focused and a Shell modal open; no activation should be emitted. Resolve conflicts with GNOME or other extensions before accepting delivery. Signals alone do not establish that the service applied a size or changed sensitivity; verify the observed content, frame, and sensitivity separately. A failed eye resize must not write eye sensitivity; a normal preset still attempts to restore the baseline if resizing fails. The service must use typed D-Bus signals rather than parse monitor output.
+After separately authorizing live mode and applying a profile, test repeated thin/full-size toggles and any configured eye/shift-eye shortcuts. Confirm each game area and the continued absence of borders. Alt+Tab away and back after transitions; exact geometry alone is not a pass. Expected `PresetActivated` IDs include the current activation token, for example `('<activation>:thin', false)` or `('<activation>:eye', true)`. Repeat with a terminal focused and a Shell modal open; no activation should be emitted. Resolve grab conflicts before accepting delivery. Signals alone do not establish that the service applied a size or sensitivity; verify the observed result separately. A failed eye resize must not write eye sensitivity; a normal preset still attempts baseline restoration if resizing fails. Fullscreen refusal/cancellation remains covered by the harness; the native fullscreen regression is not part of the accepted windowed workflow. The service consumes typed D-Bus signals rather than monitor output.
 
 The automated extension harness covers shortcut callbacks, preset IDs, shifted eye zoom, modal refusal, delayed dimensions, wrong focus, invalid sizes, pending focus loss, reconfiguration, and missing/regular FIFO refusal. It uses controlled GNOME boundary doubles and does not establish desktop acceptance. Run it with `node tests/extension_harness.cjs`.
 

@@ -1,0 +1,225 @@
+diff --git a/src/config.c b/src/config.c
+index 3557fb0..e0e6706 100644
+--- a/src/config.c
++++ b/src/config.c
+@@ -90,6 +90,8 @@ static struct {
+ 	{ "oneshotk", 	NULL,	OP_ONESHOTK,	{ ARG_LAYER, ARG_KEYSEQUENCE_DESCRIPTOR } },
+ 
+ 	{ "layer", 	NULL,	OP_LAYER,	{ ARG_LAYER } },
++	{ "layerk", NULL, OP_LAYERK, { ARG_LAYER, ARG_KEYSEQUENCE_DESCRIPTOR } },
++	{ "matchmods", NULL, OP_MATCHMODS, { ARG_KEYSEQUENCE_DESCRIPTOR, ARG_DESCRIPTOR } },
+ 
+ 	{ "overload", 	NULL,	OP_OVERLOAD,			{ ARG_LAYER, ARG_DESCRIPTOR } },
+ 	{ "overloadt", 	NULL,	OP_OVERLOAD_TIMEOUT,		{ ARG_LAYER, ARG_DESCRIPTOR, ARG_TIMEOUT } },
+@@ -774,6 +776,11 @@ static int parse_descriptor(char *s,
+ 							return -1;
+ 						}
+ 
++						if (d->op == OP_LAYERK && desc.args[1].mods) {
++							err("layerk requires an unmodified key");
++							return -1;
++						}
++
+ 						config->descriptors[config->nr_descriptors] = desc;
+ 						arg->idx = config->nr_descriptors++;
+ 						break;
+diff --git a/src/config.h b/src/config.h
+index f09f800..3c331c4 100644
+--- a/src/config.h
++++ b/src/config.h
+@@ -57,6 +57,8 @@ enum op {
+ 	OP_SCROLL_TOGGLE_OFF,
+ 	OP_SCROLL_TOGGLE,
+ 	OP_SCROLL,
++	OP_LAYERK,
++	OP_MATCHMODS,
+ };
+ 
+ union descriptor_arg {
+diff --git a/src/daemon.c b/src/daemon.c
+index cf901eb..0f6beec 100644
+--- a/src/daemon.c
++++ b/src/daemon.c
+@@ -442,6 +442,15 @@ static void handle_client(int con)
+ 		reload();
+ 		send_success(con);
+ 		break;
++	case IPC_MCSR_CAPABILITIES: {
++		struct ipc_message response = {0};
++		response.type = IPC_SUCCESS;
++		response.sz = sizeof(MCSR_CAPABILITIES) - 1;
++		memcpy(response.data, MCSR_CAPABILITIES, response.sz);
++		xwrite(con, &response, sizeof response);
++		close(con);
++		break;
++	}
+ 	case IPC_LAYER_LISTEN:
+ 		add_listener(con);
+ 		break;
+@@ -447,7 +456,7 @@ static void handle_client(int con)
+ 		add_listener(con);
+ 		break;
+ 	case IPC_BIND:
+-		success = 0;
++		success = !configs && msg.sz == 5 && !memcmp(msg.data, "reset", 5);
+ 
+ 		if (msg.sz == sizeof(msg.data)) {
+ 			send_fail(con, "bind expression size exceeded");
+diff --git a/src/keyboard.c b/src/keyboard.c
+index 97797c3..a6b3e86 100644
+--- a/src/keyboard.c
++++ b/src/keyboard.c
+@@ -611,10 +611,39 @@ static long process_descriptor(struct keyboard *kbd, uint8_t code,
+ 			setlayout(kbd, d->args[0].idx);
+ 
+ 		break;
++	case OP_MATCHMODS:
++		if (pressed) {
++			const struct descriptor *match = &kbd->config.descriptors[d->args[0].idx];
++			struct descriptor selected;
++			struct cache_entry *cached;
++			uint8_t active = 0;
++			for (i = 0; i < kbd->config.nr_layers; i++)
++				if (kbd->layer_state[i].active)
++					active |= kbd->config.layers[i].mods;
++			selected = active == match->args[1].mods ? *match :
++				kbd->config.descriptors[d->args[1].idx];
++			/* Resolve once: modifier changes must not change the release. */
++			if ((cached = cache_get(kbd, code)))
++				cached->d = selected;
++			process_descriptor(kbd, code, &selected, dl, 1, time);
++		}
++		break;
++	case OP_LAYERK:
+ 	case OP_LAYERM:
+ 	case OP_LAYER:
+ 		idx = d->args[0].idx;
+ 
++		if (d->op == OP_LAYERK) {
++			const struct descriptor *key = &kbd->config.descriptors[d->args[1].idx];
++			uint8_t out = key->args[0].code;
++			if (pressed) {
++				if (kbd->layerk_refs[out]++ == 0)
++					process_descriptor(kbd, code, key, dl, 1, time);
++			} else if (kbd->layerk_refs[out] && --kbd->layerk_refs[out] == 0) {
++				process_descriptor(kbd, code, key, dl, 0, time);
++			}
++		}
++
+ 		if (pressed) {
+ 			activate_layer(kbd, code, idx);
+ 		} else {
+@@ -1276,7 +1305,18 @@ long kbd_process_events(struct keyboard *kbd, const struct key_event *events, si
+ int kbd_eval(struct keyboard *kbd, const char *exp)
+ {
+ 	if (!strcmp(exp, "reset")) {
+-		memcpy(&kbd->config, kbd->original_config, sizeof(struct config));
++		const struct config *config = kbd->original_config;
++		struct output output = kbd->output;
++		struct keyboard *fresh;
++		size_t i;
++
++		reset_keystate(kbd);
++		for (i = 1; i < kbd->config.nr_layers; i++)
++			if (kbd->layer_state[i].active)
++				kbd->output.on_layer_change(kbd, &kbd->config.layers[i], 0);
++		fresh = new_keyboard((struct config *)config, &output);
++		memcpy(kbd, fresh, sizeof(*kbd));
++		free(fresh);
+ 		return 0;
+ 	} else {
+ 		return config_add_entry(&kbd->config, exp);
+diff --git a/src/keyboard.h b/src/keyboard.h
+index ed1b200..b8453e3 100644
+--- a/src/keyboard.h
++++ b/src/keyboard.h
+@@ -132,6 +132,9 @@ struct keyboard {
+ 
+ 	uint8_t keystate[256];
+ 
++	/* Held plain-key references emitted by momentary layerk actions. */
++	uint8_t layerk_refs[256];
++
+ 	struct {
+ 		int x;
+ 		int y;
+diff --git a/src/keyd.c b/src/keyd.c
+index 82ff4aa..87784cc 100644
+--- a/src/keyd.c
++++ b/src/keyd.c
+@@ -37,6 +37,45 @@ static int ipc_exec(int type, const char *data, size_t sz, uint32_t timeout)
+ 	return type == IPC_FAIL;
+ }
+ 
++static int mcsr_license(int argc, char *argv[])
++{
++	printf(
++		"MIT/X Consortium License\n"
++		"\n"
++		"© 2020 Raheman Vaiya <r.vaiya@gmail.com>\n"
++		"\n"
++		"Permission is hereby granted, free of charge, to any person obtaining a\n"
++		"copy of this software and associated documentation files (the \"Software\"),\n"
++		"to deal in the Software without restriction, including without limitation\n"
++		"the rights to use, copy, modify, merge, publish, distribute, sublicense,\n"
++		"and/or sell copies of the Software, and to permit persons to whom the\n"
++		"Software is furnished to do so, subject to the following conditions:\n"
++		"\n"
++		"The above copyright notice and this permission notice shall be included in\n"
++		"all copies or substantial portions of the Software.\n"
++		"\n"
++		"THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n"
++		"IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n"
++		"FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL\n"
++		"THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n"
++		"LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\n"
++		"FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\n"
++		"DEALINGS IN THE SOFTWARE.\n"
++	);
++	return 0;
++}
++
++static int mcsr_capabilities(int argc, char *argv[])
++{
++	puts(MCSR_CAPABILITIES);
++	return 0;
++}
++
++static int mcsr_daemon_capabilities(int argc, char *argv[])
++{
++	return ipc_exec(IPC_MCSR_CAPABILITIES, "", 0, 0);
++}
++
+ static int version(int argc, char *argv[])
+ {
+ 	printf("keyd " VERSION "\n");
+@@ -219,6 +258,9 @@ struct {
+ } commands[] = {
+ 	{"help", "-h", "--help", help},
+ 	{"version", "-v", "--version", version},
++	{"mcsr-capabilities", "", "", mcsr_capabilities},
++	{"mcsr-license", "", "", mcsr_license},
++	{"mcsr-daemon-capabilities", "", "", mcsr_daemon_capabilities},
+ 
+ 	{"check", "-c", "--check", check},
+ 	/* Keep -e and -m for backward compatibility. TODO: remove these at some point. */
+diff --git a/src/keyd.h b/src/keyd.h
+index 72bb9d9..a0910cf 100644
+--- a/src/keyd.h
++++ b/src/keyd.h
+@@ -55,6 +55,7 @@
+ 
+ #define ARRAY_SIZE(x) (int)(sizeof(x)/sizeof(x[0]))
+ #define VKBD_NAME "keyd virtual keyboard"
++#define MCSR_CAPABILITIES "mcsr-layerk-v1\nmcsr-matchmods-v1"
+ 
+ enum event_type {
+ 	EV_DEV_ADD,
+@@ -83,6 +84,7 @@ struct ipc_message {
+ 		IPC_MACRO,
+ 		IPC_RELOAD,
+ 		IPC_LAYER_LISTEN,
++		IPC_MCSR_CAPABILITIES,
+ 	} type;
+ 	
+ 	uint32_t timeout;

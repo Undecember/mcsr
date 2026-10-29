@@ -197,15 +197,18 @@ impl HelperFilesystem {
 pub trait HelperSystem {
     fn list_keys(&mut self) -> Result<String, String>;
     fn systemctl(&mut self, action: &'static str) -> Result<bool, String>;
+    fn readiness(&mut self, budget: Duration) -> Result<bool, String>;
     fn now(&self) -> Duration;
     fn sleep(&mut self, duration: Duration);
 }
 
 fn select_keyd_client_with(mut trusted: impl FnMut(&Path) -> bool) -> Result<&'static str, String> {
-    ["/usr/bin/keyd.rvaiya", "/usr/bin/keyd"]
-        .into_iter()
-        .find(|path| trusted(Path::new(path)))
-        .ok_or_else(|| "keyd client unavailable".into())
+    let path = crate::managed_keyd::BINARY_PATH;
+    if trusted(Path::new(path)) {
+        Ok(path)
+    } else {
+        Err("toolkit-managed keyd client unavailable or unsafe; run install/repair".into())
+    }
 }
 
 pub struct RealSystem {
@@ -221,7 +224,10 @@ impl Default for RealSystem {
 impl HelperSystem for RealSystem {
     fn list_keys(&mut self) -> Result<String, String> {
         let fs = HelperFilesystem::production();
-        let path = select_keyd_client_with(|path| fs.verify_file(path, true, false).is_ok())?;
+        let path = select_keyd_client_with(|path| {
+            fs.verify_file(path, true, false).is_ok()
+                && fs::read(path).is_ok_and(|bytes| bytes == crate::managed_keyd::binary())
+        })?;
         run_command(
             &[path.into(), "list-keys".into()],
             &[],
@@ -248,12 +254,53 @@ impl HelperSystem for RealSystem {
             Err(CommandFailure::TimedOut(message)) => Err(message),
         }
     }
+    fn readiness(&mut self, budget: Duration) -> Result<bool, String> {
+        readiness_with(
+            budget,
+            || self.started.elapsed(),
+            |args, timeout| run_command(args, &[], timeout),
+        )
+    }
     fn now(&self) -> Duration {
         self.started.elapsed()
     }
     fn sleep(&mut self, duration: Duration) {
         std::thread::sleep(duration);
     }
+}
+
+// Both commands consume one budget: systemd activity alone does not establish IPC readiness.
+fn readiness_with(
+    budget: Duration,
+    now: impl Fn() -> Duration,
+    mut run: impl FnMut(&[String], Duration) -> Result<crate::keyd::CommandOutput, CommandFailure>,
+) -> Result<bool, String> {
+    let deadline = now() + budget;
+    if budget.is_zero() {
+        return Err("keyd readiness timed out".into());
+    }
+    match run(
+        &[
+            "/usr/bin/systemctl".into(),
+            "is-active".into(),
+            "--quiet".into(),
+            "keyd.service".into(),
+        ],
+        budget,
+    ) {
+        Ok(_) => (),
+        Err(CommandFailure::Failed(_)) => return Ok(false),
+        Err(CommandFailure::TimedOut(error)) => return Err(error),
+    }
+    let remaining = deadline.saturating_sub(now());
+    if remaining.is_zero() {
+        return Err("keyd readiness timed out".into());
+    }
+    crate::keyd::verify_managed_daemon_with(crate::managed_keyd::BINARY_PATH, remaining, &mut run)?;
+    if now() > deadline {
+        return Err("keyd readiness timed out".into());
+    }
+    Ok(true)
 }
 
 fn restart_healthy(system: &mut dyn HelperSystem) -> Result<(), String> {
@@ -264,11 +311,29 @@ fn restart_healthy(system: &mut dyn HelperSystem) -> Result<(), String> {
         let deadline = system.now() + Duration::from_secs(5);
         let mut stable_since = None;
         let mut last_healthy = None;
+        let mut last_error = "keyd service or IPC not ready".to_string();
         loop {
-            let healthy = system.systemctl("is-active")?;
+            let before = system.now();
+            if stable_since.is_none() && before >= deadline {
+                return Err(format!("keyd health check timed out: {last_error}"));
+            }
+            let budget = last_healthy.map_or_else(
+                || deadline.saturating_sub(before),
+                |last: Duration| {
+                    Duration::from_millis(200).saturating_sub(before.saturating_sub(last))
+                },
+            );
+            let observation = system.readiness(budget);
             let now = system.now();
+            let healthy = match observation {
+                Ok(healthy) => healthy,
+                Err(error) => {
+                    last_error = error;
+                    false
+                }
+            };
             if stable_since.is_none() && now > deadline {
-                return Err("keyd health check timed out".into());
+                return Err(format!("keyd health check timed out: {last_error}"));
             }
             if healthy {
                 if let Some(since) = stable_since {
@@ -285,10 +350,12 @@ fn restart_healthy(system: &mut dyn HelperSystem) -> Result<(), String> {
                 }
                 last_healthy = Some(now);
             } else if stable_since.is_some() {
-                return Err("keyd health check failed during stability window".into());
+                return Err(format!(
+                    "keyd health check failed during stability window: {last_error}"
+                ));
             }
             if stable_since.is_none() && now >= deadline {
-                return Err("keyd health check timed out".into());
+                return Err(format!("keyd health check timed out: {last_error}"));
             }
             let end = stable_since.map_or(deadline, |since| since + Duration::from_millis(500));
             let remaining = end.saturating_sub(now);
@@ -332,18 +399,31 @@ fn validate_fragment(fragment: &str, keys: &HashSet<String>) -> Result<(), Strin
         return Err("invalid keyd fragment section".into());
     }
     let mut seen = HashSet::new();
+    let mut priority = false;
     for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        if line == "[mcsr_f3]" && !priority {
+            priority = true;
+            seen.clear();
+            continue;
+        }
         let (key, action) = line
             .split_once(" = ")
             .ok_or("invalid keyd fragment binding")?;
         if !valid_key(key) || !keys.contains(key) || !seen.insert(key) {
             return Err("invalid keyd fragment binding".into());
         }
-        if action != key
-            && action != format!("clearm({key})")
-            && action != "clearm(enter)"
-            && action != "clearm(esc)"
-        {
+        let permitted = action == key
+            || if priority {
+                action == "layerk(mcsr_f3, f3)" || action == format!("togglem(mcsr_chat, {key})")
+            } else {
+                action == format!("clearm({key})")
+                    || action == "clearm(enter)"
+                    || action == "clearm(esc)"
+            };
+        if !permitted {
             return Err("invalid keyd fragment action".into());
         }
     }
@@ -665,62 +745,112 @@ mod tests {
     use super::*;
 
     #[test]
-    fn helper_selects_trusted_rvaiya_before_fallback_and_rejects_unsafe_clients() {
-        use std::os::unix::fs::symlink;
-        // Both clients, rvaiya only, fallback only, unsafe rvaiya, neither trusted.
-        for (rvaiya_mode, fallback_mode, expected) in [
-            (Some(0o755), Some(0o755), Some("/usr/bin/keyd.rvaiya")),
-            (Some(0o755), None, Some("/usr/bin/keyd.rvaiya")),
-            (None, Some(0o755), Some("/usr/bin/keyd")),
-            (Some(0o777), Some(0o755), Some("/usr/bin/keyd")),
-            (Some(0o644), Some(0o777), None),
-            (None, None, None),
+    fn production_readiness_requires_active_service_and_complete_ipc_capabilities() {
+        for (active, response, ready) in [
+            (false, Ok("mcsr-layerk-v1 mcsr-matchmods-v1"), false),
+            (true, Err("connection refused"), false),
+            (true, Ok("mcsr-layerk-v1"), false),
+            (true, Ok("mcsr-layerk-v1 mcsr-matchmods-v1"), true),
         ] {
-            let temp = tempfile::tempdir().unwrap();
-            let bin = temp.path().join("usr/bin");
-            fs::create_dir_all(&bin).unwrap();
-            for directory in [
-                temp.path().to_path_buf(),
-                temp.path().join("usr"),
-                bin.clone(),
-            ] {
-                fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).unwrap();
-            }
-            let fs_adapter = HelperFilesystem::sandbox(
-                temp.path().join("etc/keyd"),
-                temp.path().join("backups"),
-                temp.path().join("helper"),
-                temp.path().to_path_buf(),
-                unsafe { libc::geteuid() },
+            let mut calls = 0;
+            let result = readiness_with(
+                Duration::from_secs(1),
+                || Duration::ZERO,
+                |args, budget| {
+                    calls += 1;
+                    assert_eq!(budget, Duration::from_secs(1));
+                    if args[0] == "/usr/bin/systemctl" {
+                        assert_eq!(
+                            args,
+                            ["/usr/bin/systemctl", "is-active", "--quiet", "keyd.service"]
+                        );
+                        if active {
+                            Ok(crate::keyd::CommandOutput {
+                                stdout: String::new(),
+                            })
+                        } else {
+                            Err(CommandFailure::Failed("inactive".into()))
+                        }
+                    } else {
+                        assert_eq!(
+                            args,
+                            [crate::managed_keyd::BINARY_PATH, "mcsr-daemon-capabilities"]
+                        );
+                        response
+                            .map(|stdout| crate::keyd::CommandOutput {
+                                stdout: stdout.into(),
+                            })
+                            .map_err(|error| CommandFailure::Failed(error.into()))
+                    }
+                },
             );
-            for (name, mode) in [("keyd.rvaiya", rvaiya_mode), ("keyd", fallback_mode)] {
-                if let Some(mode) = mode {
-                    let path = bin.join(name);
-                    fs::write(&path, b"test executable").unwrap();
-                    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
-                }
+            assert_eq!(result == Ok(true), ready, "{result:?}");
+            assert_eq!(calls, if active { 2 } else { 1 });
+            if active && !ready {
+                assert!(result.is_err());
             }
-            let select = || {
-                select_keyd_client_with(|path| {
-                    fs_adapter
-                        .verify_file(
-                            &temp.path().join(path.strip_prefix("/").unwrap()),
-                            true,
-                            false,
-                        )
-                        .is_ok()
+        }
+    }
+
+    #[test]
+    fn production_readiness_shares_command_budget_and_rejects_overrun() {
+        let clock = std::cell::Cell::new(Duration::ZERO);
+        let mut budgets = Vec::new();
+        let result = readiness_with(
+            Duration::from_millis(150),
+            || clock.get(),
+            |args, budget| {
+                budgets.push(budget);
+                clock.set(clock.get() + Duration::from_millis(100));
+                Ok(crate::keyd::CommandOutput {
+                    stdout: if args[0] == "/usr/bin/systemctl" {
+                        String::new()
+                    } else {
+                        "mcsr-layerk-v1 mcsr-matchmods-v1".into()
+                    },
                 })
-            };
-            assert_eq!(select().ok(), expected);
-            // Even a symlink to the safe fallback must not qualify as rvaiya.
-            if fallback_mode == Some(0o755) {
-                let rvaiya = bin.join("keyd.rvaiya");
-                if rvaiya.exists() {
-                    fs::remove_file(&rvaiya).unwrap();
-                }
-                symlink(bin.join("keyd"), rvaiya).unwrap();
-                assert_eq!(select().unwrap(), "/usr/bin/keyd");
-            }
+            },
+        );
+        assert!(result.unwrap_err().contains("timed out"));
+        assert_eq!(
+            budgets,
+            [Duration::from_millis(150), Duration::from_millis(50)]
+        );
+    }
+
+    #[test]
+    fn helper_selects_only_the_managed_client_and_never_falls_back() {
+        assert_eq!(
+            select_keyd_client_with(|path| path == Path::new(crate::managed_keyd::BINARY_PATH))
+                .unwrap(),
+            crate::managed_keyd::BINARY_PATH
+        );
+        assert!(select_keyd_client_with(
+            |path| path == Path::new("/usr/bin/keyd") || path == Path::new("/usr/bin/keyd.rvaiya")
+        )
+        .is_err());
+        assert!(select_keyd_client_with(|_| false).is_err());
+    }
+}
+
+#[cfg(test)]
+mod routing_validation_tests {
+    use super::*;
+    #[test]
+    fn generated_priority_fragment_is_accepted_but_arbitrary_actions_are_not() {
+        let keys = ["tab", "f3", "b", "enter", "esc"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        assert!(validate_fragment("[mcsr_chat]\ntab = tab\nb = b\nenter = clearm(enter)\nesc = clearm(esc)\n\n[mcsr_f3]\ntab = layerk(mcsr_f3, f3)\nf3 = layerk(mcsr_f3, f3)\nb = b\n", &keys).is_ok());
+        for fragment in [
+            "[mcsr_chat]\nb = b\n[mcsr_f3]\nb = command(evil)\n",
+            "[mcsr_chat]\nb = b\n[main]\nb = b\n",
+            "[mcsr_chat]\nb = b\n[mcsr_f3]\nf3 = layerk(other, f3)\n",
+            "[mcsr_chat]\nb = b\n[mcsr_f3]\nb = b\nb = b\n",
+            "[mcsr_chat]\nb = b\n[mcsr_f3]\nb = b\n[mcsr_f3]\nb = b\n",
+        ] {
+            assert!(validate_fragment(fragment, &keys).is_err(), "{fragment}");
         }
     }
 }

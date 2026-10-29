@@ -16,7 +16,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install build prerequisites
-        run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin pkg-config libdbus-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin pkg-config libdbus-1-dev build-essential patch python3
       - name: Tool versions
         run: rustc --version && cargo --version && node --version && glib-compile-schemas --version
       - name: Formatting
@@ -25,6 +25,8 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Rust tests
         run: cargo test --locked
+      - name: Managed keyd engine tests
+        run: python3 packaging/keyd/test.py
       - name: JavaScript harnesses
         run: node tests/extension_harness.cjs && node tests/ui_harness.cjs && node integration/live-ui-acceptance.mjs self-test
       - name: Schema validation

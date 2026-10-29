@@ -11,7 +11,7 @@ use std::{
     },
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Instant,
@@ -142,7 +142,10 @@ struct State {
     keys: KeySet,
     keyd_available: bool,
     active_profile: Mutex<Option<Profile>>,
-    active_preset: Mutex<Option<(u64, String)>>,
+    configured_profile: Mutex<Option<Profile>>,
+    routing_configuration: tokio::sync::Mutex<()>,
+    active_preset: Mutex<Option<(u64, String, bool)>>,
+    profile_generation: AtomicU64,
     mutation: Mutex<()>,
     error: Mutex<Option<String>>,
     errors: Mutex<Vec<String>>,
@@ -166,9 +169,14 @@ impl RuntimeAdapter for State {
         process_cwds_under(Path::new("/proc"))
     }
     fn focus_status(&self) -> Value {
-        let focus = self.focus.lock().unwrap();
-        let focused = focus.effective_at(Instant::now());
-        let connected = focus.connected_at(Instant::now());
+        let (focused, connected, visible) = {
+            let focus = self.focus.lock().unwrap();
+            (
+                focus.effective_at(Instant::now()),
+                focus.connected_at(Instant::now()),
+                visible_active_preset(&focus, &self.active_preset),
+            )
+        };
         let pending = self.state_dir.join("mutation.json").exists();
         let recovery = self.maccel_recovery_pending || (self.sensitivity_recovery)();
         let usable = self.maccel_available && !recovery;
@@ -182,8 +190,13 @@ impl RuntimeAdapter for State {
             "eye zoom available"
         };
         let (activate, clear) = self.keyd.event_counts();
-        let active_preset = visible_active_preset(&focus, &self.active_preset);
-        json!({"mode": if self.live && self.active_profile.lock().unwrap().is_some() { "live" } else { "observe-only" }, "minecraft_focused":focused, "extension_connected":connected, "mutation_recovery_pending":pending, "cleanup_error":self.error.lock().unwrap().clone(), "activation_suspended":pending || recovery, "recovery_clear_pending":pending, "unsafe_stop_failure":false, "active_preset":active_preset, "fifo_errors":[], "errors":self.errors.lock().unwrap().clone(), "reconciliation":self.reconciliation.lock().unwrap().clone(), "keyd_available":self.keyd_available, "events":{"activate":activate,"clear":clear}, "maccel":{"available":self.maccel_available,"usable":usable,"detail":detail,"recovery_pending":recovery}})
+        let active_preset = visible
+            .as_ref()
+            .and_then(|(id, full_size)| (!full_size).then_some(id));
+        let window_mode = visible
+            .as_ref()
+            .map(|(_, full_size)| if *full_size { "full_size" } else { "preset" });
+        json!({"mode": if self.live && self.active_profile.lock().unwrap().is_some() { "live" } else { "observe-only" }, "minecraft_focused":focused, "extension_connected":connected, "mutation_recovery_pending":pending, "cleanup_error":self.error.lock().unwrap().clone(), "activation_suspended":pending || recovery, "recovery_clear_pending":pending, "unsafe_stop_failure":false, "active_preset":active_preset, "window_mode":window_mode, "fifo_errors":[], "errors":self.errors.lock().unwrap().clone(), "reconciliation":self.reconciliation.lock().unwrap().clone(), "keyd_available":self.keyd_available, "events":{"activate":activate,"clear":clear}, "maccel":{"available":self.maccel_available,"usable":usable,"detail":detail,"recovery_pending":recovery}})
     }
     fn live_activation_enabled(&self) -> bool {
         self.live
@@ -205,10 +218,15 @@ impl RuntimeAdapter for State {
         Ok(())
     }
     fn on_applied(&self, profile: &Profile) -> Result<(), String> {
+        if self.configured_profile.lock().unwrap().as_ref() != Some(profile) {
+            *self.configured_profile.lock().unwrap() = None;
+        }
         let bytes = serde_json::to_vec(profile).map_err(|e| e.to_string())?;
         atomic_replace(&self.state_dir.join("active-profile.json"), &bytes, true)
             .map_err(|e| e.to_string())?;
-        *self.active_profile.lock().unwrap() = Some(profile.clone());
+        let mut active_profile = self.active_profile.lock().unwrap();
+        *active_profile = Some(profile.clone());
+        self.profile_generation.fetch_add(1, Ordering::SeqCst);
         *self.active_preset.lock().unwrap() = None;
         Ok(())
     }
@@ -219,6 +237,9 @@ impl RuntimeAdapter for State {
         Ok(())
     }
     fn after_restore(&self, profile: Option<&Profile>) -> Result<(), String> {
+        if self.configured_profile.lock().unwrap().as_ref() != profile {
+            *self.configured_profile.lock().unwrap() = None;
+        }
         if let Some(profile) = profile {
             let bytes = serde_json::to_vec(profile).map_err(|e| e.to_string())?;
             atomic_replace(&self.state_dir.join("active-profile.json"), &bytes, true)
@@ -227,7 +248,9 @@ impl RuntimeAdapter for State {
             remove_record(&self.state_dir.join("active-profile.json"))
                 .map_err(|e| e.to_string())?;
         }
-        *self.active_profile.lock().unwrap() = profile.cloned();
+        let mut active_profile = self.active_profile.lock().unwrap();
+        *active_profile = profile.cloned();
+        self.profile_generation.fetch_add(1, Ordering::SeqCst);
         *self.active_preset.lock().unwrap() = None;
         Ok(())
     }
@@ -319,9 +342,9 @@ impl ServiceRuntime<SessionPeer, InstalledMaccelPeer> {
         self.tasks.push(tokio::spawn(async move {
             loop {
                 if *cancel.borrow() { return Ok(()); }
-                let initial = load_profile(&api);
+                let initial: Result<Profile, RuntimeError> = Ok(state.active_profile.lock().unwrap().clone().unwrap_or_default());
                 if let Ok(mut configured_profile) = initial {
-                    if let Err(error) = bridge.configure_presets(&configured_profile).await {
+                    if let Err(error) = configure_routes(&state, &bridge, &configured_profile).await {
                         state.record_error(error);
                     } else {
                     let (sender, mut receiver) = mpsc::channel(16);
@@ -332,9 +355,10 @@ impl ServiceRuntime<SessionPeer, InstalledMaccelPeer> {
                         tokio::select! {
                             changed = cancel.changed() => { if changed.is_err() || *cancel.borrow() { return Ok(()); } },
                             _ = configure_tick.tick() => {
-                                match load_profile(&api) {
-                                    Ok(profile) if profile != configured_profile => {
-                                        match bridge.configure_presets(&profile).await {
+                                let active: Result<Profile, RuntimeError> = Ok(state.active_profile.lock().unwrap().clone().unwrap_or_default());
+                                match active {
+                                    Ok(profile) if profile != configured_profile || state.configured_profile.lock().unwrap().as_ref() != Some(&profile) => {
+                                        match configure_routes(&state, &bridge, &profile).await {
                                             Ok(()) => configured_profile = profile,
                                             Err(error) => { state.record_error(error); break; }
                                         }
@@ -359,6 +383,9 @@ impl ServiceRuntime<SessionPeer, InstalledMaccelPeer> {
                     state.record_error(error);
                 }
                 preset.invalidate();
+                *state.configured_profile.lock().unwrap() = None;
+                if state.live { state.keyd.clear().map_err(err)?; }
+                let _ = bridge.configure_presets(&Profile::default()).await;
                 *state.active_preset.lock().unwrap() = None;
                 state.focus.lock().unwrap().disconnect();
                 effective.send_replace(false);
@@ -450,6 +477,24 @@ impl<P: GnomePeer + 'static, H: MaccelPeer + 'static> ServiceRuntime<P, H> {
                 Err(e) => return Err(err(e)),
             }
         }
+        // The managed service may have been inactive before installation. Bootstrap
+        // through the existing fixed clear helper before asking its client for IPC.
+        if config.enable_live_keyd {
+            runner.verify_helper().map_err(err)?;
+            runner
+                .run(
+                    &[
+                        "/usr/bin/sudo".into(),
+                        "-n".into(),
+                        crate::install::HELPER_PATH.into(),
+                        "privileged".into(),
+                        "keyd".into(),
+                        "clear".into(),
+                    ],
+                    &[],
+                )
+                .map_err(err)?;
+        }
         let (keys, keyd_available) = discover_keys(runner.as_ref());
         let keyd = Arc::new(KeydController::with_keys(
             &state_dir,
@@ -500,7 +545,10 @@ impl<P: GnomePeer + 'static, H: MaccelPeer + 'static> ServiceRuntime<P, H> {
             keys: keys.clone(),
             keyd_available,
             active_profile: Mutex::new(active_profile),
+            configured_profile: Mutex::new(None),
+            routing_configuration: tokio::sync::Mutex::new(()),
             active_preset: Mutex::new(None),
+            profile_generation: AtomicU64::new(0),
             mutation: Mutex::new(()),
             error: Mutex::new(None),
             errors: Mutex::new(Vec::new()),
@@ -508,6 +556,21 @@ impl<P: GnomePeer + 'static, H: MaccelPeer + 'static> ServiceRuntime<P, H> {
             accepting_presets: AtomicBool::new(true),
         });
         let bridge = Arc::new(GnomeBridge::new(gnome, focus.clone()));
+        let initial_profile = state
+            .active_profile
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_default();
+        if state.live {
+            configure_routes(&state, &bridge, &initial_profile).await?;
+        } else {
+            bridge
+                .configure_presets(&initial_profile)
+                .await
+                .map_err(err)?;
+        }
+        *state.configured_profile.lock().unwrap() = Some(initial_profile);
         let preset = Arc::new(PresetController::new(
             bridge.clone(),
             sensitivity.clone(),
@@ -596,8 +659,10 @@ impl<P: GnomePeer + 'static, H: MaccelPeer + 'static> ServiceRuntime<P, H> {
                                         || state.state_dir.join("mutation.json").exists();
                                     if !unsafe_state {
                                         if let Some(profile) = state.active_profile.lock().unwrap().clone() {
-                                        let focus = state.focus.lock().unwrap().clone();
-                                        state.keyd.sync_focus(&profile, &focus).map_err(err)?;
+                                        if state.configured_profile.lock().unwrap().as_ref() == Some(&profile) {
+                                            let focus = state.focus.lock().unwrap().clone();
+                                            state.keyd.sync_focus(&profile, &focus).map_err(err)?;
+                                        }
                                         }
                                     }
                                     Ok::<(),RuntimeError>(())
@@ -828,6 +893,48 @@ fn reconcile_cycle(state: &State, config: &RuntimeConfig) -> Result<(), RuntimeE
     }
 }
 
+async fn configure_routes<P: GnomePeer>(
+    state: &State,
+    bridge: &GnomeBridge<P>,
+    profile: &Profile,
+) -> Result<(), RuntimeError> {
+    let _routing = state.routing_configuration.lock().await;
+    if !state.live {
+        bridge
+            .configure_presets(&Profile::default())
+            .await
+            .map_err(err)?;
+        *state.configured_profile.lock().unwrap() = Some(profile.clone());
+        return Ok(());
+    }
+    {
+        let _mutation = state.mutation.lock().unwrap();
+        *state.configured_profile.lock().unwrap() = None;
+        if state.live {
+            state.keyd.clear().map_err(err)?;
+        }
+    }
+    bridge
+        .configure_presets_with_fence(profile, || {
+            state.keyd.routing_fence().map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(err)?;
+    let _mutation = state.mutation.lock().unwrap();
+    if state
+        .active_profile
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_default()
+        != *profile
+    {
+        return Err(err("applied profile changed during shortcut configuration"));
+    }
+    *state.configured_profile.lock().unwrap() = Some(profile.clone());
+    Ok(())
+}
+
 async fn apply_signal<P: GnomePeer, H: MaccelPeer>(
     api: &ApiState,
     state: &State,
@@ -844,7 +951,18 @@ async fn apply_signal<P: GnomePeer, H: MaccelPeer>(
     if state.state_dir.join("mutation.json").exists() {
         return Err(RuntimeError("preset acceptance blocked".into()));
     }
-    let profile = load_profile(api)?;
+    let (applied, profile_generation) = {
+        let profile = state.active_profile.lock().unwrap();
+        (
+            profile.clone(),
+            state.profile_generation.load(Ordering::SeqCst),
+        )
+    };
+    let profile = match applied {
+        Some(profile) => profile,
+        None if configure && !state.live => load_profile(api)?,
+        None => return Err(err("no applied profile for preset routing")),
+    };
     if !state.maccel_available
         && !shifted
         && profile
@@ -855,10 +973,19 @@ async fn apply_signal<P: GnomePeer, H: MaccelPeer>(
         return Err(RuntimeError("maccel unavailable".into()));
     }
     if configure {
-        bridge.configure_presets(&profile).await.map_err(err)?;
+        if state.live {
+            configure_routes(state, bridge, &profile).await?;
+        } else {
+            bridge.configure_presets(&profile).await.map_err(err)?;
+        }
     }
+    let wire_id = if configure {
+        bridge.preset_signal_id(id).await.map_err(err)?
+    } else {
+        id.to_owned()
+    };
     if !bridge
-        .accept_preset_signal(id, shifted)
+        .accept_preset_signal(&wire_id, shifted)
         .await
         .map_err(err)?
     {
@@ -868,39 +995,55 @@ async fn apply_signal<P: GnomePeer, H: MaccelPeer>(
         return Err(RuntimeError("preset acceptance stopped".into()));
     }
     let focus = state.focus.lock().unwrap().clone();
+    let preset_id = wire_id
+        .split_once(':')
+        .map(|(_, id)| id)
+        .ok_or_else(|| err("invalid preset signal"))?;
     let result = preset
-        .apply(&profile, id, shifted, &focus)
+        .apply_with_fence(&profile, preset_id, shifted, &focus, |result| {
+            let _profile = state.active_profile.lock().unwrap();
+            if state.profile_generation.load(Ordering::SeqCst) != profile_generation {
+                return Err(crate::gnome::PresetError(
+                    "profile changed during preset apply".into(),
+                ));
+            }
+            if !publish_active_preset(
+                &state.focus,
+                &state.active_preset,
+                focus_generation,
+                &result.preset_id,
+                result.full_size,
+            ) {
+                return Err(crate::gnome::PresetError(
+                    "preset focus changed during apply".into(),
+                ));
+            }
+            Ok(())
+        })
         .await
         .map_err(err)?;
-    if !publish_active_preset(
-        &state.focus,
-        &state.active_preset,
-        focus_generation,
-        &result.preset_id,
-    ) {
-        return Err(RuntimeError("preset focus changed during apply".into()));
-    }
     Ok(result)
 }
 
 fn publish_active_preset(
     focus: &SharedFocus,
-    active: &Mutex<Option<(u64, String)>>,
+    active: &Mutex<Option<(u64, String, bool)>>,
     generation: u64,
     id: &str,
+    full_size: bool,
 ) -> bool {
     let focus = focus.lock().unwrap();
     if focus.generation() != generation || !focus.effective_at(Instant::now()) {
         return false;
     }
-    *active.lock().unwrap() = Some((generation, id.to_owned()));
+    *active.lock().unwrap() = Some((generation, id.to_owned(), full_size));
     true
 }
 
 fn visible_active_preset(
     focus: &FocusState,
-    active: &Mutex<Option<(u64, String)>>,
-) -> Option<String> {
+    active: &Mutex<Option<(u64, String, bool)>>,
+) -> Option<(String, bool)> {
     if !focus.effective_at(Instant::now()) {
         return None;
     }
@@ -908,8 +1051,8 @@ fn visible_active_preset(
         .lock()
         .unwrap()
         .as_ref()
-        .filter(|(generation, _)| *generation == focus.generation())
-        .map(|(_, id)| id.clone())
+        .filter(|(generation, _, _)| *generation == focus.generation())
+        .map(|(_, id, full_size)| (id.clone(), *full_size))
 }
 
 #[cfg(test)]
@@ -930,7 +1073,7 @@ mod tests {
         focus.lock().unwrap().observe_at(event("Terminal"), now);
         focus.lock().unwrap().observe_at(event("Minecraft"), now);
         assert!(!super::publish_active_preset(
-            &focus, &active, generation, "eye"
+            &focus, &active, generation, "eye", false
         ));
         assert!(active.lock().unwrap().is_none());
         let new_generation = focus.lock().unwrap().generation();
@@ -938,7 +1081,8 @@ mod tests {
             &focus,
             &active,
             new_generation,
-            "normal"
+            "normal",
+            false
         ));
         focus.lock().unwrap().observe_at(event("Terminal"), now);
         focus.lock().unwrap().observe_at(event("Minecraft"), now);

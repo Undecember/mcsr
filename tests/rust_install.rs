@@ -342,6 +342,23 @@ impl System for Fake {
                 mode: 0o755,
             },
         ];
+        files.extend([
+            RootFile {
+                path: mcsr_toolkit::managed_keyd::BINARY_PATH.into(),
+                bytes: mcsr_toolkit::managed_keyd::binary().to_vec(),
+                mode: 0o755,
+            },
+            RootFile {
+                path: mcsr_toolkit::managed_keyd::DROPIN_PATH.into(),
+                bytes: mcsr_toolkit::managed_keyd::DROPIN.as_bytes().to_vec(),
+                mode: 0o644,
+            },
+            RootFile {
+                path: "/var/lib/mcsr-toolkit/keyd-service.json".into(),
+                bytes: b"{\"active\":false}\n".to_vec(),
+                mode: 0o600,
+            },
+        ]);
         for (path, template) in [
             (
                 "/etc/sudoers.d/mcsr-toolkit-rust-keyd",
@@ -631,6 +648,9 @@ impl RootSetup for FakeUninstallSetup<'_> {
             "/etc/sudoers.d/mcsr-toolkit-rust-maccel",
             SERVICE_PATH,
             HELPER_PATH,
+            mcsr_toolkit::managed_keyd::BINARY_PATH,
+            mcsr_toolkit::managed_keyd::DROPIN_PATH,
+            "/var/lib/mcsr-toolkit/keyd-service.json",
         ]
         .iter()
         .map(PathBuf::from)
@@ -2141,4 +2161,47 @@ fn root_verification_errors_block_mutation_and_remain_visible_with_only_policies
             "verification must precede mutation"
         );
     }
+}
+
+#[test]
+fn managed_keyd_install_and_uninstall_own_only_toolkit_files() {
+    use mcsr_toolkit::managed_keyd::{binary, BINARY_PATH, DROPIN, DROPIN_PATH};
+    let fake = Fake::new();
+    fake.put("/usr/bin/keyd", b"distribution keyd preserved");
+    install(&fake, &fake.artifact()).unwrap();
+    let binary_file = fake.get(BINARY_PATH).expect("managed daemon installed");
+    assert_eq!(binary_file.bytes, binary());
+    assert_eq!((binary_file.uid, binary_file.mode), (0, 0o755));
+    assert_eq!(fake.get(DROPIN_PATH).unwrap().bytes, DROPIN.as_bytes());
+    uninstall(&fake).unwrap();
+    assert!(fake.get(BINARY_PATH).is_none());
+    assert!(fake.get(DROPIN_PATH).is_none());
+    assert_eq!(
+        fake.get("/usr/bin/keyd").unwrap().bytes,
+        b"distribution keyd preserved"
+    );
+}
+
+#[test]
+fn managed_keyd_foreign_override_refuses_before_root_setup() {
+    use mcsr_toolkit::managed_keyd::DROPIN_PATH;
+    let fake = Fake::new();
+    fake.put(DROPIN_PATH, b"foreign administrator override");
+    fake.files
+        .lock()
+        .unwrap()
+        .get_mut(Path::new(DROPIN_PATH))
+        .unwrap()
+        .uid = 0;
+    assert!(install(&fake, &fake.artifact()).is_err());
+    assert!(!fake
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| event == "begin_root_setup"));
+    assert_eq!(
+        fake.get(DROPIN_PATH).unwrap().bytes,
+        b"foreign administrator override"
+    );
 }

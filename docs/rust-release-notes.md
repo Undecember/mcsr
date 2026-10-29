@@ -1,71 +1,115 @@
-# MCSR Toolkit v0.1.0
+# MCSR Toolkit v0.2.0
 
-MCSR Toolkit v0.1.0 is the first stable release, distributed as a single Rust executable for Minecraft speedrunning on Ubuntu GNOME Wayland. It includes the loopback browser service, UI assets, GNOME Shell 50 extension, guided setup and recovery commands, and narrowly scoped privileged helper modes. Local release integration and tagging are approved; public release publication is pending.
+Approved for stable release on 2026-10-30. MCSR Toolkit v0.2.0 targets Ubuntu
+GNOME Shell 50 on x86_64 Wayland. Exact artifact identity and publication
+verification are tracked in [the release checklist](rust-release-checklist.md#v020-candidate--2026-10-30).
 
-## New since beta.3
+## Changes since v0.1.0
 
-- Synchronize enabled controls in existing local Standard Settings configs, including modern JSON and legacy text files, so world creation does not undo toolkit mappings. Apply and Restore cover the mod files alongside Minecraft options, preserve disabled and unrelated settings, and defer changes while Minecraft is running. Shared configs are unchanged; redirects produce an actionable error.
-- Make resize presets borderless and centered for windowed Minecraft clients, with observed size and position checks. Fullscreen requests are refused until Minecraft leaves fullscreen through its own control. XWayland decoration removal requires `xprop`; native Wayland decoration removal depends on client support.
+- Embed a pinned, patched keyd daemon/client and use a toolkit-owned systemd
+  override while preserving the distribution executable and service enablement.
+  Installation and recovery verify daemon capabilities over IPC. Empty-config
+  reset now succeeds, and startup requires sustained daemon readiness.
+- Give held native F3 and remapped F3 sources such as Tab priority for F3+B,
+  F3+G, repeated F3+F, Shift+F3+F and Shift+F3. Chat/command entry preserves
+  ordinary typing, and resize shortcuts resume after release.
+- Toggle normal resize presets between the centered borderless preset and a
+  full-size borderless window using observed geometry. Both stay windowed;
+  eye/shift-eye presets keep their fixed-size behavior. Status distinguishes
+  the last preset resize from full-size mode.
+- Prepare `fullscreen:false` in Minecraft options and enabled existing local
+  Standard Settings when a profile has resize presets. Preview lists affected
+  files, Apply waits for Minecraft to close, and Restore preserves exact bytes.
+- Temporarily hide the stock GNOME panel for a focused, successfully resized,
+  managed borderless window overlapping the panel on the same monitor. Focus,
+  overview, Shell grabs/modals, session and window changes restore GNOME's
+  current visibility policy. Routing reset and disable release ownership.
 
-The searchable control picker, keyboard/mouse input recorder, expanded bindings, and keyd uninstall recovery and diagnostic fixes from the beta releases remain included.
+Existing control editing, input recording, retained backup/Restore and optional
+maccel eye sensitivity remain included. Managed keyd source provenance and its
+retained MIT license are documented in [the packaging guide](../packaging/keyd/README.md).
 
-## Highlights
+## Download, installation and upgrade
 
-- Preview physical → emitted → Minecraft key mappings, then apply or restore instance files with retained backups.
-- Observe-only service startup; live keyd remapping requires an explicit local service configuration.
-- Focus-aware keyd and optional maccel integration, Minecraft window resize shortcuts, and guided `doctor`, `install`, `repair`, and `uninstall` commands.
-- Rust state is kept separate from Python-era state. The installer refuses unresolved Python recovery, and uninstall retains profiles, backups, and Python-era recovery data.
-
-## Download and install
-
-**Target:** Ubuntu with GNOME Shell 50 on x86_64 Wayland. `keyd` is required for keyboard integration; `maccel` is optional for eye sensitivity. The extension UUID is `mcsr-toolkit@undecember.github.io`.
-
-Download `mcsr-toolkit` and its matching `mcsr-toolkit.sha256` asset. Keep them together, verify the checksum, make the executable runnable, then inspect prerequisites:
+The two release assets are `mcsr-toolkit` and `mcsr-toolkit.sha256`.
+After downloading the published assets, keep the pair together:
 
 ```sh
 sha256sum --check mcsr-toolkit.sha256 && chmod +x ./mcsr-toolkit && ./mcsr-toolkit doctor
 ```
 
-Inspect the `doctor` report before continuing. Run install separately after reviewing prerequisites and recovery state:
+Review the report, then run `./mcsr-toolkit install`. If the extension is staged,
+log out of GNOME Wayland, log back in, and run `./mcsr-toolkit repair` from the
+same verified executable. The new extension must be ACTIVE before setup can
+finish. The installed service starts observe-only; live keyd activation remains
+an explicit local service setting. `keyd.service` must be installed and unmasked;
+`maccel` is optional. XWayland decoration removal requires `xprop` from `x11-utils`.
 
-```sh
-./mcsr-toolkit install
-```
+An existing root helper must match the executable inspecting protected recovery
+state. On a hash mismatch, use the matching installed
+`/usr/local/bin/mcsr-toolkit doctor` first. Restore managed input and verify
+recovery before uninstalling with that matching installed executable. The
+supervised upgrade used guided uninstall, reviewed authenticated helper
+bootstrap, extension staging, logout/login and repair. Retained root records
+can require manual bootstrap review after uninstall; an automatic in-place
+upgrade is not established. Do not overwrite mismatched files or delete
+recovery records to bypass preflight. See [installation and recovery guidance](../README.md#repair-and-uninstall).
 
-If install stages a GNOME extension and reports that setup is incomplete, log out of GNOME Wayland, log back in, then run `./mcsr-toolkit repair` from the same verified executable. For interrupted setup or uninstall, use `doctor` and the documented recovery guidance in the [README](https://github.com/Undecember/mcsr/blob/v0.1.0/README.md#repair-and-uninstall). Review recovery state before continuing; do not delete markers or recovery records to bypass a refusal.
+## Live evidence and known limitations
 
-A downloaded executable must match the installed root helper before it can verify protected recovery state. If `doctor` reports a helper hash mismatch, run `/usr/local/bin/mcsr-toolkit doctor` from the matching installed version to inspect recovery. This diagnostic does not update the installation or authorize overwriting the helper; a mismatched existing helper still requires manual review.
+The supervised single-monitor XWayland checks passed repeated exact 250×1080
+and 1920×1080 windowed toggles, overview/app focus recovery, all five F3
+combinations with native F3 and Tab, both chat routes, standalone-release
+recovery and outside typing. The panel run additionally passed hiding in both
+sizes, usable input in the formerly covered top strip, overview/other-app panel
+restoration and return, and Alt+F2 Run-dialog restoration. Apply/Restore returned
+Minecraft options and local Standard Settings to their exact recorded hashes;
+temporary keyboard settings were restored and the service returned healthy
+observe-only. One focus-loss resize cancellation occurred in each recorded run.
 
-To uninstall, first restore toolkit-managed keyd and maccel state and verify ordinary input, then run the matching installed `/usr/local/bin/mcsr-toolkit uninstall`. Older installed uninstallers retain their original behavior until updated; downloading this candidate alone does not fix them. Review the README's [uninstall and drop-in guidance](https://github.com/Undecember/mcsr/blob/v0.1.0/README.md#repair-and-uninstall) before removing user service overrides.
+These observations used the exact development candidates recorded in
+[the toggle live record](superpowers/evidence/2026-10-30-borderless-toggle-live.md)
+and [the panel live record](superpowers/evidence/2026-10-30-managed-panel-live.md).
+The version-bumped release artifact has separate automated identity checks;
+those earlier desktop runs do not establish a fresh install or live run of
+that exact artifact.
 
-## Known limitations and live-test coverage
+- **Alt+Tab is blocked when Tab is remapped to F3.** Super/overview switching
+  worked; this does not establish an Alt+Tab pass.
+- **The test host needs temporary F13–F24 translation** (`fkeys:basic_13-24`) for
+  internal resize/fence keys. Its default keyboard map does not deliver all
+  required F-key symbols. This release does not automatically change XKB options;
+  default-map acceptance is not established.
+- **Native F11/menu fullscreen remains problematic after resize.** The supported
+  alternative is windowed thin/full-size borderless toggling. Actual fullscreen
+  requests are refused; this is not a fix for the native fullscreen failure.
+- Native Wayland client decorations, multiple monitors/scales, eye/shift-eye
+  behavior on the latest candidate, workspace gestures, panel disable/re-enable
+  while hidden, and lock/unlock remain pending supervised acceptance. Automated
+  harnesses cover relevant lifecycle boundaries but do not prove desktop input
+  regions or those untested transitions. Replacement panels are unsupported.
+- Live logout/login while remapped, crash/restart during active remapping,
+  rollback and authentication-prompt counts, the latest picker/input recorder,
+  and an installed-binary new-instance Restore cycle retain earlier limits.
+  Focus updates remain asynchronous; zero input leakage is not established.
 
-Earlier supervised Rust checks passed for installation and repair, browser Save/Preview/Apply/Restore, live Backward remapping, the Enter dual-role chat case, focus clearing, and recovery to recorded keyd, sensitivity, and Minecraft options baselines. Those checks predate several current features; automated tests and the stable designation do not establish additional live acceptance. Detailed evidence is retained in the [Wayland acceptance record](https://github.com/Undecember/mcsr/blob/v0.1.0/integration/acceptance-wayland.md).
+These are explicit release-readiness considerations, not resolved by a version
+bump or a passing build. See [the resize guide](../integration/resize-wayland.md)
+and [the release checklist](rust-release-checklist.md#v020-candidate--2026-10-30).
 
-- Live GNOME logout/login while remapped, and lock/unlock or service crash/restart during active keyd remapping, remain untested. Eye sensitivity recovery was observed in observe-only mode.
-- Successful guided uninstall with rollback and authentication prompt counts has not been validated on the supervised Rust device. Source fixes address the reproduced missing-keyd-client and empty-configuration reset failures. An older installed executable retains its old behavior until upgraded.
-- A separate installed-binary new-instance Restore cycle, the latest picker/input recorder, and Standard Settings synchronization have not been exercised on the supervised Minecraft/GNOME device. They have automated coverage.
-- The supervised XWayland resize primitive verified borderless size and centering. The corrected candidate lifecycle and shortcut-through-service path still need live acceptance; native Wayland acceptance is also pending. An earlier compositor-only fullscreen restoration stranded Minecraft until recovery through its own fullscreen control. Current code refuses fullscreen transitions. See the [resize acceptance record](https://github.com/Undecember/mcsr/blob/v0.1.0/integration/resize-wayland.md).
-- Focus changes are asynchronous; a brief interval may occur before keyd bindings clear. The checks do not establish zero input leakage during focus transitions.
+## Candidate identity and publication boundary
 
-Report issues through the [GitHub issue tracker](https://github.com/Undecember/mcsr/issues).
+The development base is `d6df1a7edd5241917623da01af9e4e9914624b78`.
+Release preparation changes package version to `0.2.0` and updates release
+metadata/documentation; no runtime behavior change is intended. The exact
+build-input manifest, executable SHA256, verification and local staged assets
+are recorded in [the release checklist](rust-release-checklist.md#v020-candidate--2026-10-30).
 
-## Candidate verification and artifact identity
-
-Automated checks and local artifact identity are recorded in the [release checklist](https://github.com/Undecember/mcsr/blob/v0.1.0/docs/rust-release-checklist.md#v010-stable-candidate--2026-10-29). GitHub links using `v0.1.0` resolve after the reviewed tag is pushed.
-
-The candidate starts from development commit `a62271da0439a1a87eca881f4927ac98af5e2006`. Release preparation removes one redundant reference in `src/apply.rs` to satisfy Clippy; the fixture self-test also signals readiness after registering its shutdown handler to eliminate a test race. Neither adjustment changes application behavior. The release checklist records the exact source-input fingerprint so the uncommitted preparation delta is not confused with the base commit.
-
-| Item | Value |
-| --- | --- |
-| Development base | `a62271da0439a1a87eca881f4927ac98af5e2006` |
-| Executable SHA256 | `2c55101368ca33fcd0b7099e06cef51caf49b985cbf4ab71e3f8afcf84a71c73` |
-| Executable size | `12,817,512` bytes |
-| Source-input fingerprint | `63cae1f76980cfaa85106141440ec9920c8459990c563fea8bb2705d16a03bbd` |
-| Build environment | Ubuntu 26.04.1 LTS, `x86_64-unknown-linux-gnu`; Rust/Cargo 1.98.1, Node.js 24.21.0, GLib 2.88.0 |
-
-The verified executable and matching checksum are staged under `target/release-preparation/v0.1.0/` in the primary checkout. The build-input manifest is beside that directory as `v0.1.0-source-inputs.sha256`. All dynamic libraries resolve locally; the highest required GLIBC symbol version is `2.39`. Compatibility with other Ubuntu versions has not been tested.
-
-Publish exactly `mcsr-toolkit` and `mcsr-toolkit.sha256` as stable release assets, with GitHub's prerelease flag disabled. Verify both downloaded public files after publication; local candidate checks do not establish public download identity. Build commands are in the [README](https://github.com/Undecember/mcsr/blob/v0.1.0/README.md#build-and-deterministic-checks). This project is licensed under [MIT](https://github.com/Undecember/mcsr/blob/v0.1.0/LICENSE).
-
-Cargo package version `0.1.0` already matches the stable tag `v0.1.0`; no beta suffix or prerelease designation applies to this version.
+The operator approved local release integration and annotated tag `v0.2.0` on
+2026-10-30: squash `release/v0.2.0` into release-only `main`. Publication and
+`main` → `dev` synchronization retain their separate approvals. Public download
+identity and release-commit CI must be verified after publication; local
+validation alone does not establish those results.
+Previous stable release notes remain at the
+[v0.1.0 tag](https://github.com/Undecember/mcsr/blob/v0.1.0/docs/rust-release-notes.md).
+Report issues through the [issue tracker](https://github.com/Undecember/mcsr/issues).

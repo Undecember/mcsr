@@ -70,6 +70,7 @@ pub struct ResizeResult {
     pub width: u32,
     pub height: u32,
     pub sensitivity: Option<String>,
+    pub full_size: bool,
 }
 
 pub struct PresetController<P: GnomePeer, H: MaccelPeer> {
@@ -122,8 +123,46 @@ impl<P: GnomePeer, H: MaccelPeer> PresetController<P, H> {
         shifted: bool,
         focus: &FocusState,
     ) -> Result<ResizeResult, PresetError> {
+        self.apply_with_fence(profile, preset_id, shifted, focus, |_| Ok(()))
+            .await
+    }
+
+    pub(crate) async fn apply_with_fence(
+        &self,
+        profile: &Profile,
+        preset_id: &str,
+        shifted: bool,
+        focus: &FocusState,
+        publish: impl FnOnce(&ResizeResult) -> Result<(), PresetError>,
+    ) -> Result<ResizeResult, PresetError> {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let _guard = self.operation.lock().await;
+        let result = self
+            .apply_inner(profile, preset_id, shifted, focus, generation)
+            .await?;
+        if let Err(error) = publish(&result) {
+            return if self.sensitivity.needs_restore() {
+                match self.sensitivity.restore().await {
+                    Ok(()) => Err(error),
+                    Err(recovery) => Err(PresetError(format!(
+                        "{error}; sensitivity recovery failed: {recovery}"
+                    ))),
+                }
+            } else {
+                Err(error)
+            };
+        }
+        Ok(result)
+    }
+
+    async fn apply_inner(
+        &self,
+        profile: &Profile,
+        preset_id: &str,
+        shifted: bool,
+        focus: &FocusState,
+        generation: u64,
+    ) -> Result<ResizeResult, PresetError> {
         let preset = profile
             .presets
             .iter()
@@ -141,11 +180,17 @@ impl<P: GnomePeer, H: MaccelPeer> PresetController<P, H> {
         let resize_result = match size {
             Err(error) => Err(error),
             Ok((width, height)) if was_focused => match self.fresh(generation) {
-                Ok(()) => self
-                    .bridge
-                    .resize_focused(width, height)
-                    .await
-                    .map_err(|e| PresetError(e.to_string())),
+                Ok(()) => {
+                    let result = if preset.eye_zoom {
+                        self.bridge
+                            .resize_focused(width, height)
+                            .await
+                            .map(|(w, h)| (w, h, false))
+                    } else {
+                        self.bridge.toggle_resize_focused(width, height).await
+                    };
+                    result.map_err(|e| PresetError(e.to_string()))
+                }
                 Err(error) => Err(error),
             },
             Ok(_) => Err(PresetError("Minecraft is not focused".into())),
@@ -167,6 +212,7 @@ impl<P: GnomePeer, H: MaccelPeer> PresetController<P, H> {
                         width: actual.0,
                         height: actual.1,
                         sensitivity: None,
+                        full_size: actual.2,
                     })
                 }
                 (Err(resize), Ok(())) => Err(resize),
@@ -184,6 +230,7 @@ impl<P: GnomePeer, H: MaccelPeer> PresetController<P, H> {
                 width: actual.0,
                 height: actual.1,
                 sensitivity: None,
+                full_size: false,
             });
         }
         let eye_result = self
@@ -214,6 +261,7 @@ impl<P: GnomePeer, H: MaccelPeer> PresetController<P, H> {
             width: actual.0,
             height: actual.1,
             sensitivity: Some(sensitivity),
+            full_size: false,
         })
     }
 }
@@ -226,17 +274,35 @@ pub trait GnomePeer: Send + Sync {
         &self,
         json: String,
     ) -> impl std::future::Future<Output = Result<(), GnomeError>> + Send;
+    fn prepare_routing(
+        &self,
+        _generation: String,
+    ) -> impl std::future::Future<Output = Result<(), GnomeError>> + Send {
+        async { Ok(()) }
+    }
     fn resize_focused(
         &self,
         width: u32,
         height: u32,
     ) -> impl std::future::Future<Output = Result<(u32, u32), GnomeError>> + Send;
+    fn toggle_resize_focused(
+        &self,
+        _width: u32,
+        _height: u32,
+    ) -> impl std::future::Future<Output = Result<(u32, u32, bool), GnomeError>> + Send {
+        async {
+            Err(GnomeError(
+                "toggle resize unsupported; upgrade the MCSR GNOME extension".into(),
+            ))
+        }
+    }
 }
 
 pub struct GnomeBridge<P: GnomePeer> {
     peer: Arc<P>,
     focus: SharedFocus,
     configured: Mutex<HashSet<String>>,
+    configuring: Mutex<()>,
 }
 impl<P: GnomePeer> GnomeBridge<P> {
     pub fn new(peer: Arc<P>, focus: SharedFocus) -> Self {
@@ -244,18 +310,35 @@ impl<P: GnomePeer> GnomeBridge<P> {
             peer,
             focus,
             configured: Mutex::new(HashSet::new()),
+            configuring: Mutex::new(()),
         }
     }
 
     pub async fn configure_presets(&self, profile: &Profile) -> Result<(), GnomeError> {
+        self.configure_inner(profile, None).await
+    }
+    pub async fn configure_presets_with_fence(
+        &self,
+        profile: &Profile,
+        emit: impl Fn() -> Result<(), String> + Send + Sync,
+    ) -> Result<(), GnomeError> {
+        self.configure_inner(profile, Some(&emit)).await
+    }
+    async fn configure_inner(
+        &self,
+        profile: &Profile,
+        fence: Option<&(dyn Fn() -> Result<(), String> + Send + Sync)>,
+    ) -> Result<(), GnomeError> {
+        let _configuration = self.configuring.lock().await;
         if profile.presets.len() > 8 {
             return Err(GnomeError("too many presets".into()));
         }
+        let plan = crate::routing::RoutingPlan::compile(profile).map_err(GnomeError)?;
         let mut configured = Vec::new();
         let mut ids = HashSet::new();
         let mut shortcuts = HashSet::new();
         let mut eye = None;
-        for preset in &profile.presets {
+        for (preset, signal) in profile.presets.iter().zip(&plan.signals) {
             if !(100..=16384).contains(&preset.width) || !(100..=16384).contains(&preset.height) {
                 return Err(GnomeError("invalid preset size".into()));
             }
@@ -281,7 +364,7 @@ impl<P: GnomePeer> GnomeBridge<P> {
             }
             configured.push(PresetConfig {
                 id: &preset.id,
-                accelerator: translated,
+                accelerator: signal.accelerator.clone(),
                 eye_zoom: preset.eye_zoom,
             });
         }
@@ -291,14 +374,63 @@ impl<P: GnomePeer> GnomeBridge<P> {
                 "shifted eye zoom conflicts with another preset".into(),
             ));
         }
-        let json = serde_json::to_string(&configured).map_err(|e| GnomeError(e.to_string()))?;
-        bounded(METHOD_TIMEOUT, self.peer.configure_presets(json)).await?;
+        let activation = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let json = serde_json::to_string(&PresetConfiguration {
+            protocol: "mcsr-keyd-v1",
+            generation: &activation,
+            profile_generation: &plan.generation,
+            drain: fence.is_some(),
+            presets: configured,
+        })
+        .map_err(|e| GnomeError(e.to_string()))?;
+        // A failed or timed-out replacement must not keep accepting an old plan.
+        self.configured.lock().await.clear();
+        let configure = async {
+            if let Some(emit) = fence {
+                bounded(
+                    METHOD_TIMEOUT,
+                    self.peer.prepare_routing(activation.clone()),
+                )
+                .await?;
+                emit().map_err(GnomeError)?;
+            }
+            loop {
+                match self.peer.configure_presets(json.clone()).await {
+                    Err(error)
+                        if fence.is_some() && error.0.contains("routing input drain pending") =>
+                    {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    result => return result,
+                }
+            }
+        };
+        if let Err(error) = bounded(METHOD_TIMEOUT, configure).await {
+            if fence.is_some() {
+                let _ = bounded(METHOD_TIMEOUT, self.peer.prepare_routing(String::new())).await;
+            }
+            return Err(error);
+        }
         *self.configured.lock().await = profile
             .presets
             .iter()
-            .map(|preset| preset.id.clone())
+            .map(|preset| format!("{}:{}", activation, preset.id))
             .collect();
         Ok(())
+    }
+
+    pub async fn preset_signal_id(&self, id: &str) -> Result<String, GnomeError> {
+        self.configured
+            .lock()
+            .await
+            .iter()
+            .find(|wire| wire.split_once(':').is_some_and(|(_, value)| value == id))
+            .cloned()
+            .ok_or_else(|| GnomeError("preset routing is not configured".into()))
     }
 
     pub async fn accept_preset_signal(&self, id: &str, _shifted: bool) -> Result<bool, GnomeError> {
@@ -323,6 +455,38 @@ impl<P: GnomePeer> GnomeBridge<P> {
         focus.effective_at(Instant::now())
     }
 
+    pub async fn toggle_resize_focused(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Result<(u32, u32, bool), ResizeError> {
+        if !(100..=16384).contains(&width) || !(100..=16384).contains(&height) {
+            return Err(ResizeError::InvalidSize);
+        }
+        let (class, _, _, _, modal) = bounded(FOCUS_TIMEOUT, self.peer.get_focus())
+            .await
+            .map_err(ResizeError::Gnome)?;
+        if modal || !is_minecraft_class(&class) {
+            return Err(ResizeError::NotFocused);
+        }
+        let (actual_width, actual_height, full_size) = bounded(
+            METHOD_TIMEOUT,
+            self.peer.toggle_resize_focused(width, height),
+        )
+        .await
+        .map_err(ResizeError::Gnome)?;
+        if !(100..=16384).contains(&actual_width) || !(100..=16384).contains(&actual_height) {
+            return Err(ResizeError::InvalidSize);
+        }
+        if !full_size && (actual_width, actual_height) != (width, height) {
+            return Err(ResizeError::Inexact {
+                requested: (width, height),
+                actual: (actual_width, actual_height),
+            });
+        }
+        Ok((actual_width, actual_height, full_size))
+    }
+
     pub async fn resize_focused(&self, width: u32, height: u32) -> Result<(u32, u32), ResizeError> {
         if !(100..=16384).contains(&width) || !(100..=16384).contains(&height) {
             return Err(ResizeError::InvalidSize);
@@ -344,6 +508,15 @@ impl<P: GnomePeer> GnomeBridge<P> {
         }
         Ok(actual)
     }
+}
+
+#[derive(Serialize)]
+struct PresetConfiguration<'a> {
+    protocol: &'static str,
+    generation: &'a str,
+    profile_generation: &'a str,
+    drain: bool,
+    presets: Vec<PresetConfig<'a>>,
 }
 
 #[derive(Serialize)]
@@ -510,6 +683,16 @@ impl GnomePeer for SessionPeer {
         })
         .await
     }
+    async fn prepare_routing(&self, generation: String) -> Result<(), GnomeError> {
+        bounded(METHOD_TIMEOUT, async {
+            self.proxy()
+                .await?
+                .call("PrepareRouting", &(generation,))
+                .await
+                .map_err(bus_error)
+        })
+        .await
+    }
     async fn configure_presets(&self, json: String) -> Result<(), GnomeError> {
         bounded(METHOD_TIMEOUT, async {
             self.proxy()
@@ -519,6 +702,19 @@ impl GnomePeer for SessionPeer {
                 .map_err(bus_error)
         })
         .await
+    }
+    async fn toggle_resize_focused(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Result<(u32, u32, bool), GnomeError> {
+        bounded(METHOD_TIMEOUT, async {
+            self.proxy().await?.call("ToggleResizeFocused", &(width, height)).await.map_err(|error| {
+                if matches!(&error, zbus::Error::MethodError(name, _, _) if name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod") {
+                    GnomeError("toggle resize unsupported; upgrade the MCSR GNOME extension".into())
+                } else { bus_error(error) }
+            })
+        }).await
     }
     async fn resize_focused(&self, width: u32, height: u32) -> Result<(u32, u32), GnomeError> {
         bounded(METHOD_TIMEOUT, async {
@@ -578,4 +774,126 @@ impl GnomeBridge<SessionPeer> {
 
 fn bus_error(error: impl fmt::Display) -> GnomeError {
     GnomeError(error.to_string())
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    use crate::{focus::FocusEvent, maccel::SensitivityError, profile::ResizePreset};
+    use std::sync::atomic::AtomicBool;
+    use tokio::sync::Notify;
+
+    struct Peer;
+    impl GnomePeer for Peer {
+        async fn get_focus(&self) -> Result<(String, String, u32, u32, bool), GnomeError> {
+            Ok(("Minecraft".into(), "Game".into(), 800, 600, false))
+        }
+        async fn configure_presets(&self, _: String) -> Result<(), GnomeError> {
+            Ok(())
+        }
+        async fn resize_focused(&self, w: u32, h: u32) -> Result<(u32, u32), GnomeError> {
+            Ok((w, h))
+        }
+    }
+    #[derive(Default)]
+    struct Helper {
+        block_restore: AtomicBool,
+        block_eye: AtomicBool,
+        eye_started: Notify,
+        eye_release: Notify,
+        restoring: Notify,
+        release: Notify,
+        calls: std::sync::Mutex<Vec<&'static str>>,
+    }
+    impl MaccelPeer for Helper {
+        async fn preflight(&self) -> Result<(), SensitivityError> {
+            Ok(())
+        }
+        async fn eye(&self, _: &str) -> Result<String, SensitivityError> {
+            self.calls.lock().unwrap().push("eye");
+            if self.block_eye.swap(false, Ordering::SeqCst) {
+                self.eye_started.notify_one();
+                self.eye_release.notified().await;
+            }
+            Ok("0.02083000005222856998443603515625".into())
+        }
+        async fn restore(&self) -> Result<String, SensitivityError> {
+            self.calls.lock().unwrap().push("restore");
+            if self.block_restore.swap(false, Ordering::SeqCst) {
+                self.restoring.notify_one();
+                self.release.notified().await;
+            }
+            Ok("a".repeat(64))
+        }
+    }
+    #[tokio::test]
+    async fn rejected_profile_publication_recovers_before_newer_eye_write() {
+        let focus = Arc::new(std::sync::Mutex::new(FocusState::default()));
+        focus.lock().unwrap().observe(FocusEvent {
+            window_class: "Minecraft".into(),
+            title: "Game".into(),
+            modal: false,
+        });
+        let helper = Arc::new(Helper::default());
+        let sensitivity = Arc::new(SensitivityController::new(helper.clone()));
+        sensitivity.startup_restore().await.unwrap();
+        let controller = Arc::new(PresetController::new(
+            Arc::new(GnomeBridge::new(Arc::new(Peer), focus.clone())),
+            sensitivity.clone(),
+            focus.clone(),
+        ));
+        let mut profile = Profile::default();
+        profile.presets.push(ResizePreset {
+            id: "eye".into(),
+            width: 400,
+            height: 300,
+            shortcut: "f7".into(),
+            eye_zoom: true,
+        });
+        let snapshot = focus.lock().unwrap().clone();
+        helper.block_restore.store(true, Ordering::SeqCst);
+        helper.block_eye.store(true, Ordering::SeqCst);
+        let profile_generation = Arc::new(AtomicU64::new(0));
+        let first = {
+            let controller = controller.clone();
+            let profile = profile.clone();
+            let snapshot = snapshot.clone();
+            let profile_generation = profile_generation.clone();
+            tokio::spawn(async move {
+                controller
+                    .apply_with_fence(&profile, "eye", false, &snapshot, |_| {
+                        if profile_generation.load(Ordering::SeqCst) != 0 {
+                            Err(PresetError("profile changed during preset apply".into()))
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(2), helper.eye_started.notified())
+            .await
+            .unwrap();
+        profile_generation.store(1, Ordering::SeqCst);
+        helper.eye_release.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), helper.restoring.notified())
+            .await
+            .unwrap();
+        let second = {
+            let controller = controller.clone();
+            let profile = profile.clone();
+            let snapshot = snapshot.clone();
+            tokio::spawn(async move { controller.apply(&profile, "eye", false, &snapshot).await })
+        };
+        tokio::task::yield_now().await;
+        assert_eq!(*helper.calls.lock().unwrap(), ["restore", "eye", "restore"]);
+        helper.release.notify_one();
+        assert!(first.await.unwrap().is_err());
+        assert!(second.await.unwrap().is_ok());
+        assert_eq!(
+            *helper.calls.lock().unwrap(),
+            ["restore", "eye", "restore", "eye"]
+        );
+        assert!(sensitivity.needs_restore());
+    }
 }

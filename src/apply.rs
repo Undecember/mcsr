@@ -1,11 +1,11 @@
 use crate::instances::{discover_instances, Instance};
 use crate::mapping::{plan_controls, ManagedState};
-use crate::options::{parse_options, render_options};
+use crate::options::{parse_options, render_options, render_windowed_options};
 use crate::paths::{
     atomic_replace, ensure_state, private_dir, remove_record, safe_record, state_dir, sync_dir,
 };
 use crate::profile::Profile;
-use crate::standard_settings::{prepare_local, ConfigEdit};
+use crate::standard_settings::{prepare_local, prepare_local_with_windowed, ConfigEdit};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -96,6 +96,7 @@ struct Prepared {
     new: Vec<u8>,
     state: ManagedState,
     configs: Vec<ConfigEdit>,
+    windowed: bool,
 }
 impl Prepared {
     fn changed(&self) -> bool {
@@ -247,10 +248,18 @@ impl ApplyCoordinator {
                         return Err(err(plan.conflicts.join("; ")));
                     }
                     let new = render_options(&document, &plan);
+                    let new = if !profile.presets.is_empty() {
+                        render_windowed_options(&new).map_err(err)?
+                    } else {
+                        new
+                    };
                     let effective = parse_options(&new).map_err(err)?;
-                    let configs =
-                        prepare_local(instance.options_path.parent().unwrap(), &effective.bindings)
-                            .map_err(err)?;
+                    let configs = prepare_local_with_windowed(
+                        instance.options_path.parent().unwrap(),
+                        &effective.bindings,
+                        !profile.presets.is_empty(),
+                    )
+                    .map_err(err)?;
                     Ok::<_, ApplyError>((old, new, plan.next_state, configs))
                 })();
                 match result {
@@ -278,7 +287,27 @@ impl ApplyCoordinator {
             results.push(InstanceResult {
                 instance_id: instance.id.clone(),
                 status: status.into(),
-                detail: String::new(),
+                detail: if changed && !profile.presets.is_empty() {
+                    let game = instance.options_path.parent().unwrap();
+                    let mut files = Vec::new();
+                    if old != new {
+                        files.push("options.txt".to_owned());
+                    }
+                    files.extend(
+                        configs
+                            .iter()
+                            .filter(|edit| edit.before != edit.after)
+                            .map(|edit| {
+                                edit.path.strip_prefix(game).unwrap().display().to_string()
+                            }),
+                    );
+                    format!(
+                        "Prepare windowed mode (fullscreen:false); update {}",
+                        files.join(", ")
+                    )
+                } else {
+                    String::new()
+                },
             });
             if status != "deferred" {
                 prepared.push(Prepared {
@@ -287,6 +316,7 @@ impl ApplyCoordinator {
                     new,
                     state: next_state,
                     configs,
+                    windowed: !profile.presets.is_empty(),
                 });
             }
         }
@@ -319,9 +349,12 @@ impl ApplyCoordinator {
             if fs::read(&instance.options_path).map_err(err)? != *expected {
                 return Err(err("options changed during apply"));
             }
-            let configs =
-                prepare_local(instance.options_path.parent().unwrap(), &Default::default())
-                    .map_err(err)?;
+            let configs = prepare_local_with_windowed(
+                instance.options_path.parent().unwrap(),
+                &Default::default(),
+                item.windowed,
+            )
+            .map_err(err)?;
             if configs.len() != item.configs.len() {
                 return Err(err("Standard Settings files changed during apply"));
             }

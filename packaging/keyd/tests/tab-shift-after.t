@@ -1,0 +1,10 @@
+tab down
+shift down
+100ms
+tab up
+shift up
+
+f3 down
+shift down
+f3 up
+shift up

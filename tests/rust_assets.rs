@@ -54,3 +54,51 @@ fn executable_contains_web_and_extension_assets() {
         );
     }
 }
+
+#[test]
+fn embedded_managed_keyd_executes_capability_probe_and_checks_routing() {
+    use mcsr_toolkit::managed_keyd;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let bytes = managed_keyd::binary();
+    assert_eq!(&bytes[..4], b"\x7fELF");
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("mcsr-keyd");
+    std::fs::write(&binary, bytes).unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let output = Command::new(&binary)
+        .arg("mcsr-capabilities")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let capabilities = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        capabilities.split_whitespace().collect::<Vec<_>>(),
+        managed_keyd::CAPABILITIES
+    );
+    let license = Command::new(&binary).arg("mcsr-license").output().unwrap();
+    assert!(license.status.success());
+    assert_eq!(
+        String::from_utf8(license.stdout).unwrap(),
+        include_str!("../vendor/keyd/LICENSE")
+    );
+    let config = dir.path().join("routing.conf");
+    std::fs::write(
+        &config,
+        "[ids]\n*\n[main]\ntab = layerk(mcsr_debug, f3)\nb = matchmods(f13, b)\n[mcsr_debug]\nb = b\n",
+    )
+    .unwrap();
+    let output = Command::new(&binary)
+        .arg("check")
+        .arg(&config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(managed_keyd::DROPIN.contains(managed_keyd::BINARY_PATH));
+    assert!(!managed_keyd::DROPIN.contains("/usr/bin/keyd"));
+}

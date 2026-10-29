@@ -1,0 +1,5 @@
+# Pristine upstream bytes are verified by vendor/keyd/SHA256SUMS.
+# Unified patches contain required context prefixes before upstream tabs.
+vendor/keyd/** -whitespace
+packaging/keyd/mcsr.patch -whitespace
+docs/superpowers/evidence/2026-10-29-f3-keyd/layerk-prototype.patch -whitespace

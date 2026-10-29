@@ -31,12 +31,14 @@ const makeWindow = (options = {}) => {
         ...options};
     return w;
 };
-const reply = () => ({values: [], errors: [], return_value(v) {this.values.push(Array.from(v.value));},
+const reply = () => ({values: [], types: [], errors: [], return_value(v) {this.types.push(v.type); this.values.push(Array.from(v.value));},
     return_dbus_error(_name, message) {this.errors.push(message);}});
 const applySize = w => {w.frame = {...w.moves.at(-1)}; w.content = {...w.frame};};
 const bindings = new Map();
 const settings = new Map();
 const emitted = [];
+const generation = 'a'.repeat(64);
+const configuration = (presets, gen = generation) => JSON.stringify({protocol: 'mcsr-keyd-v1', generation: gen, presets});
 let grabFailure = null;
 let addFailure = null;
 let setFailure = null;
@@ -80,20 +82,20 @@ extension._bindings = [];
 extension._presets = [];
 extension._resizeRequests = new Map();
 extension._dbus = {emit_signal: (name, value) => emitted.push([name, value.type, value.value])};
-extension.ConfigurePresets(JSON.stringify([
-    {id: 'normal', accelerator: 'F6', eye_zoom: false},
-    {id: 'eye', accelerator: 'F7', eye_zoom: true},
+extension.ConfigurePresets(configuration([
+    {id: 'normal', accelerator: 'F13', eye_zoom: false},
+    {id: 'eye', accelerator: 'F14', eye_zoom: true},
 ]));
-assert.deepEqual(Array.from(settings.get('eye-zoom-shift')), ['<Shift>F7']);
+assert.deepEqual(Array.from(settings.get('eye-zoom-shift')), ['<Shift>F14']);
 assert.equal(bindings.size, 0, 'no global grabs while Minecraft is unfocused');
 focused = makeWindow({get_wm_class: () => 'Minecraft 1.16.1', move_resize_frame(_u, x, y, width, height) {requested = {x, y, width, height};}});
 extension._sendFocus();
 bindings.get('preset-2')();
 assert.equal(emitted[0][0], 'PresetActivated');
 assert.equal(emitted[0][1], '(sb)');
-assert.deepEqual(Array.from(emitted[0][2]), ['eye', false]);
+assert.deepEqual(Array.from(emitted[0][2]), [`${generation}:eye`, false]);
 bindings.get('eye-zoom-shift')();
-assert.deepEqual(Array.from(emitted[1][2]), ['eye', true]);
+assert.deepEqual(Array.from(emitted[1][2]), [`${generation}:eye`, true]);
 const staleBinding = bindings.get('preset-1');
 modal = 1;
 extension._sendFocus();
@@ -255,6 +257,83 @@ for (const rejected of ['hints', 'size']) {
     if (rejected === 'hints') processes.at(-1).complete();
     tick(2000); assert.match(r.errors[0], /timed out/); assert.equal(r.values.length, 0);
 }
+// Toggle direction comes from observed borderless geometry, not activation history.
+callbacks.clear(); now = 0;
+context.Main.layoutManager.monitors = [{x: -1600, y: 200, width: 1600, height: 900}];
+w = makeWindow(); focused = w;
+for (const [expected, result] of [
+    [{x: -940, y: 350, width: 280, height: 600}, [280, 600, false]],
+    [{x: -1600, y: 200, width: 1600, height: 900}, [1600, 900, true]],
+    [{x: -940, y: 350, width: 280, height: 600}, [280, 600, false]],
+]) {
+    r = reply(); extension.ToggleResizeFocusedAsync([280, 600], r);
+    assert.deepEqual(w.moves.at(-1), expected); assert.equal(r.values.length, 0);
+    applySize(w); tick(); assert.deepEqual(r.values, [result]); assert.deepEqual(r.types, ['(uub)']);
+}
+// A manual move or resize, a different window, and a focus round trip cannot reuse state.
+w.frame.x++; w.content.x++; focused = null; extension._sendFocus(); focused = w;
+r = reply(); extension.ToggleResizeFocusedAsync([280, 600], r);
+assert.deepEqual(w.moves.at(-1), {x: -940, y: 350, width: 280, height: 600});
+applySize(w); tick(); assert.deepEqual(r.values, [[280, 600, false]]);
+w.frame.width--; w.content.width--; r = reply(); extension.ToggleResizeFocusedAsync([280, 600], r);
+applySize(w); tick(); assert.deepEqual(r.values, [[280, 600, false]]);
+w = makeWindow(); focused = w; r = reply(); extension.ToggleResizeFocusedAsync([280, 600], r);
+applySize(w); tick(); assert.deepEqual(r.values, [[280, 600, false]]);
+// Decorated clients do not count as an already-applied borderless preset.
+w = makeWindow({decorated: true, frame: {x: -940, y: 350, width: 280, height: 600},
+    content: {x: -940, y: 350, width: 280, height: 600}}); focused = w; r = reply();
+extension.ToggleResizeFocusedAsync([280, 600], r); processes.at(-1).complete(); w.decorated = false; tick();
+applySize(w); tick(); assert.deepEqual(r.values, [[280, 600, false]]);
+// Monitor changes or reconfiguration during asynchronous preparation invalidate the request.
+for (const change of ['monitor', 'geometry', 'generation', 'focus', 'fullscreen']) {
+    callbacks.clear(); now = 0;
+    context.Main.layoutManager.monitors = [{x: 0, y: 0, width: 1920, height: 1080}, {x: 1920, y: 0, width: 1280, height: 720}];
+    let index = 0; w = makeWindow({decorated: true, get_monitor: () => index}); focused = w; r = reply();
+    extension.ToggleResizeFocusedAsync([280, 600], r); const proc = processes.at(-1);
+    if (change === 'monitor') index = 1;
+    if (change === 'geometry') context.Main.layoutManager.monitors[0].width = 1800;
+    if (change === 'generation') extension.PrepareRouting('');
+    if (change === 'focus') focused = makeWindow();
+    if (change === 'fullscreen') w.fullscreen = true;
+    tick(); proc.complete(); tick();
+    assert.equal(r.errors.length, 1, change); assert.equal(r.values.length, 0); assert.equal(w.moves.length, 0);
+}
+// Concurrent calls, invalid monitors, constraints, and fullscreen are rejected.
+callbacks.clear(); now = 0; context.Main.layoutManager.monitors = [{x: 0, y: 0, width: 1920, height: 1080}];
+w = makeWindow({frame: {x: 820, y: 240, width: 280, height: 600}, content: {x: 820, y: 240, width: 280, height: 600}}); focused = w; r = reply();
+extension.ToggleResizeFocusedAsync([280, 600], r); const overlap = reply(); extension.ToggleResizeFocusedAsync([280, 600], overlap);
+assert.match(overlap.errors[0], /pending/); applySize(w); w.content.width--; tick(2000);
+assert.match(r.errors[0], /timed out/); assert.equal(r.values.length, 0);
+w = makeWindow({fullscreen: true}); focused = w; r = reply(); extension.ToggleResizeFocusedAsync([280, 600], r);
+assert.match(r.errors[0], /fullscreen/i); assert.equal(w.moves.length, 0);
+context.Main.layoutManager.monitors = []; w = makeWindow(); focused = w; r = reply();
+extension.ToggleResizeFocusedAsync([280, 600], r); assert.match(r.errors[0], /monitor geometry/); assert.equal(w.moves.length, 0);
+
+// Logical monitor coordinates are used directly even when the physical display is scaled.
+callbacks.clear(); now = 0; context.Main.layoutManager.monitors = [{x: 1000, y: -500, width: 1280, height: 720, scale: 2}];
+w = makeWindow({frame: {x: 1500, y: -440, width: 280, height: 600}, content: {x: 1500, y: -440, width: 280, height: 600}});
+focused = w; r = reply(); extension.ToggleResizeFocusedAsync([280, 600], r);
+assert.deepEqual(w.moves[0], {x: 1000, y: -500, width: 1280, height: 720});
+applySize(w); tick(); assert.deepEqual(r.values, [[1280, 720, true]]);
+// Full-size success requires both content position and size, and cannot outlive disable or xprop failure.
+callbacks.clear(); now = 0; w = makeWindow({frame: {x: 1500, y: -440, width: 280, height: 600}, content: {x: 1500, y: -440, width: 280, height: 600}});
+focused = w; r = reply(); extension.ToggleResizeFocusedAsync([280, 600], r); applySize(w); w.content.x++;
+tick(2000); assert.match(r.errors[0], /timed out/); assert.equal(r.values.length, 0);
+for (const failure of ['exit', 'disable']) {
+    callbacks.clear(); now = 0; w = makeWindow({decorated: true}); focused = w; r = reply();
+    extension.ToggleResizeFocusedAsync([280, 600], r); const proc = processes.at(-1);
+    if (failure === 'exit') proc.complete(true);
+    else {
+        const original = extension._sendEvent; extension._sendEvent = () => {};
+        extension._cancel = {cancel() {}}; extension._dbus = {unexport() {}};
+        context.global.display.disconnect = () => {}; context.Main.layoutManager.disconnectObject = () => {};
+        extension.disable(); extension._sendEvent = original;
+        extension._dbus = {emit_signal: (name, value) => emitted.push([name, value.type, value.value])};
+        proc.complete();
+    }
+    assert.equal(r.errors.length, 1); assert.equal(r.values.length, 0); assert.equal(w.moves.length, 0);
+}
+
 // The monitor is chosen when preparation finishes, using its stage coordinates.
 callbacks.clear(); now = 0;
 context.Main.layoutManager.monitors = [{x: 0, y: 0, width: 1920, height: 1080},
@@ -308,9 +387,9 @@ extension._retry = null;
 extension._openFifo();
 assert.equal(opened, false);
 // Reconfiguration drops stale bindings and an invalid replacement leaves valid ones intact.
-extension.ConfigurePresets('[{"id":"only","accelerator":"F8","eye_zoom":false}]');
+extension.ConfigurePresets(configuration(JSON.parse('[{"id":"only","accelerator":"F15","eye_zoom":false}]')));
 assert.equal(bindings.size, 0);
-assert.throws(() => extension.ConfigurePresets('[{"id":"bad","accelerator":"F8","eye_zoom":true},{"id":"bad","accelerator":"F9","eye_zoom":false}]'));
+assert.throws(() => extension.ConfigurePresets(configuration(JSON.parse('[{"id":"bad","accelerator":"F15","eye_zoom":true},{"id":"bad","accelerator":"F16","eye_zoom":false}]'))));
 assert.equal(bindings.size, 0);
 // Limits are checked before Mutter is touched, and loss of focus cancels pending observation.
 focused = makeWindow({move_resize_frame(_u, x, y, width, height) {requested = {x, y, width, height};}});
@@ -328,19 +407,32 @@ assert.equal(extension._resizeRequests.size, 0);
 focused = {get_wm_class: () => 'Minecraft'};
 extension._sendFocus();
 // GNOME reports failed grabs as NONE; retain the prior working shortcut on failure.
-const replacement = '[{"id":"new","accelerator":"F10","eye_zoom":false},{"id":"next","accelerator":"F11","eye_zoom":false}]';
+const replacement = configuration(JSON.parse('[{"id":"new","accelerator":"F17","eye_zoom":false},{"id":"next","accelerator":"F18","eye_zoom":false}]'), 'b'.repeat(64));
 for (const failure of ['grab', 'add', 'settings']) {
     if (failure === 'grab') grabFailure = 'preset-2';
     if (failure === 'add') addFailure = 'preset-2';
     if (failure === 'settings') setFailure = 'preset-2';
     assert.throws(() => extension.ConfigurePresets(replacement), /grab|mid-add|settings/);
     assert.deepEqual(Array.from(bindings.keys()), ['preset-1']);
-    assert.deepEqual(Array.from(settings.get('preset-1')), ['F8']);
+    assert.deepEqual(Array.from(settings.get('preset-1')), ['F15']);
     assert.deepEqual(Array.from(settings.get('preset-2')), []);
     focused = {get_wm_class: () => 'Minecraft'};
     bindings.get('preset-1')();
-    assert.deepEqual(Array.from(emitted.at(-1)[2]), ['only', false]);
+    assert.deepEqual(Array.from(emitted.at(-1)[2]), [`${generation}:only`, false]);
 }
+
+// Reject incompatible wire shapes before touching existing bindings.
+assert.throws(() => extension.ConfigurePresets('[]'), /protocol|configuration/);
+assert.throws(() => extension.ConfigurePresets(JSON.stringify({protocol: 'other', generation, presets: []})), /protocol|configuration/);
+const beforeReconfigure = bindings.get('preset-1');
+const sameIdGeneration = 'c'.repeat(64);
+extension.ConfigurePresets(configuration([{id: 'only', accelerator: 'F15', eye_zoom: false}], sameIdGeneration));
+const previousEmissionCount = emitted.length;
+beforeReconfigure();
+assert.equal(emitted.length, previousEmissionCount, 'old callback cannot emit a new-generation command');
+bindings.get('preset-1')();
+assert.deepEqual(Array.from(emitted.at(-1)[2]), [`${sameIdGeneration}:only`, false]);
+
 // A path may turn into a regular file during async open. Verify the opened stream.
 context.Gio.Credentials = class {get_unix_user() {return 1000;}};
 const fileInfo = (mode, uid = 1000, inode = '123') => ({
@@ -412,7 +504,7 @@ assert.equal(extension._writingBytes, null);
 // installation failure removes every partial grab before the next retry.
 focused = null;
 extension._presets = [];
-extension.ConfigurePresets('[{"id":"letter","accelerator":"s","eye_zoom":false},{"id":"next","accelerator":"F11","eye_zoom":false}]');
+extension.ConfigurePresets(configuration(JSON.parse('[{"id":"letter","accelerator":"F19","eye_zoom":false},{"id":"next","accelerator":"F18","eye_zoom":false}]')));
 assert.equal(bindings.size, 0);
 focused = {get_wm_class: () => 'Minecraft'};
 grabFailure = 'preset-2';
@@ -435,3 +527,168 @@ disabling.disable();
 assert.equal(bindings.size, 0);
 assert.equal(canceled, true);
 assert.equal(unexported, true);
+
+// A grab collision first encountered on focus regain must block producer focus.
+focused = null;
+extension.ConfigurePresets(configuration([{id: 'late', accelerator: 'F13', eye_zoom: false}]));
+focused = makeWindow();
+grabFailure = 'preset-1';
+context.Toolkit.prototype._sendFocus.call(extension);
+assert.equal(bindings.size, 0);
+assert.equal(extension.GetFocus()[4], true, 'unavailable resize consumer must report blocked focus');
+context.Toolkit.prototype._sendFocus.call(extension);
+assert.equal(extension.GetFocus()[4], false, 'successful retry restores consumer readiness');
+
+// New bindings cannot be committed until an ordered keyd marker has drained input.
+const nextGeneration = 'c'.repeat(64);
+const beforeDrain = bindings.get('preset-1');
+extension.PrepareRouting(nextGeneration);
+assert.deepEqual([...bindings.keys()], ['routing-fence']);
+assert.equal(extension.GetFocus()[4], true);
+const pendingConfig = JSON.stringify({protocol:'mcsr-keyd-v1',generation:nextGeneration,drain:true,presets:[{id:'drained',accelerator:'F13',eye_zoom:false}]});
+assert.throws(() => extension.ConfigurePresets(pendingConfig), /input drain pending/);
+const countBeforeOld = emitted.length;
+beforeDrain();
+assert.equal(emitted.length, countBeforeOld);
+bindings.get('routing-fence')();
+assert.equal(extension.GetFocus()[4], true);
+extension.ConfigurePresets(pendingConfig);
+assert.equal(extension.GetFocus()[4], false);
+assert.deepEqual([...bindings.keys()], ['preset-1']);
+extension.PrepareRouting('d'.repeat(64));
+extension.PrepareRouting('');
+assert.equal(bindings.size, 0, 'aborted drain releases the temporary fence grab');
+
+extension.PrepareRouting('e'.repeat(64));
+tick(5000);
+assert.equal(bindings.size,0,'abandoned input drain expires without a service abort');
+
+// Exercise the real extension lifecycle against Shell-like signal and policy boundaries.
+{
+    const signals = object => {
+        const handlers = new Map(); let next = 1;
+        object.connect = (name, fn) => {const id = next++; handlers.set(id, [name, fn]); return id;};
+        object.disconnect = id => handlers.delete(id);
+        object.emit = name => {for (const [id, [signal, fn]] of [...handlers])
+            if (signal === name && handlers.has(id)) fn(object);};
+        object.connectObject = (name, fn, owner) => {owner._testSignal = object.connect(name, fn);};
+        object.disconnectObject = owner => object.disconnect(owner._testSignal);
+        object.handlerCount = () => handlers.size;
+        return object;
+    };
+    const panel = signals({x: 0, y: 0, width: 1920, height: 30, visible: true,
+        get_transformed_position() {return [this.x, this.y];},
+        get_transformed_size() {return [this.width, this.height];},
+        hide() {if (this.visible) {this.visible = false; this.emit('notify::visible');}},
+        show() {if (!this.visible) {this.visible = true; this.emit('notify::visible');}}});
+    const layout = signals({panelBox: panel, primaryIndex: 0,
+        monitors: [{x: 0, y: 0, width: 1920, height: 1080}, {x: 1920, y: 0, width: 1280, height: 720}],
+        policyVisible: true, _trackedActors: [{actor: panel, trackFullscreen: true}],
+        _updateActorVisibility(data) {this.policyVisible ? data.actor.show() : data.actor.hide();},
+        _updateVisibility() {this._updateActorVisibility(this._trackedActors[0]);}});
+    const display = signals({get focus_window() {return focused;}});
+    const overview = signals({visible: false});
+    const session = signals({currentMode: 'user', parentMode: null, isPrimary: true, hasWindows: true, isLocked: false, isGreeter: false});
+    context.global.display = display; context.global.stage = signals({is_grabbed: false}); context.Main.layoutManager = layout;
+    context.Main.overview = overview; context.Main.sessionMode = session;
+    context.GLib.get_user_runtime_dir = () => '/tmp';
+    context.Gio.DBus = {session: {}};
+    context.Gio.DBusExportedObject = {wrapJSObject: () => ({export() {}, unexport() {}, emit_signal() {}})};
+    context.Gio.File = {new_for_path: () => ({query_info() {throw Error('missing');}})};
+    context.Gio.Cancellable = class {cancel() {this.cancelled = true;} is_cancelled() {return !!this.cancelled;}};
+    context.Toolkit.prototype.getSettings = () => extension._settings;
+    callbacks.clear();
+    const game = signals(makeWindow({get_title: () => 'Game'}));
+    game.minimized = false;
+    focused = game; modal = 0;
+    const live = new context.Toolkit(); live.enable();
+    const resize = (width, height) => {
+        const result = reply(); live.ResizeFocusedAsync([width, height], result);
+        applySize(game); tick(); assert.equal(result.errors.length, 0); assert.equal(result.values.length, 1);
+    };
+    resize(280, 1080);
+    assert.equal(panel.visible, false, 'verified overlapping thin window hides panel');
+    layout._updateVisibility(); assert.equal(panel.visible, false, 'Shell refresh cannot cover eligible game');
+    focused = null; display.emit('notify::focus-window'); assert.equal(panel.visible, true, 'focus loss restores immediately');
+    focused = game; display.emit('notify::focus-window'); assert.equal(panel.visible, false, 'focus regain hides');
+    overview.visible = true; overview.emit('showing'); assert.equal(panel.visible, true, 'overview restores immediately');
+    overview.visible = false; overview.emit('hidden'); assert.equal(panel.visible, false);
+    modal = 1; layout.emit('system-modal-opened'); assert.equal(panel.visible, true, 'modal restores immediately');
+    modal = 0; context.global.stage.emit('notify::key-focus'); assert.equal(panel.visible, false);
+    // pushModal(stage) grabs before incrementing modalCount and does not change
+    // an already-null key focus; popModal decrements before dismissing the grab.
+    context.global.stage.is_grabbed = true; context.global.stage.emit('notify::is-grabbed');
+    assert.equal(panel.visible, true, 'stage grab restores before modalCount or key focus changes');
+    modal = 1;
+    // An inner grab does not change is-grabbed; releasing it must not re-hide.
+    modal = 2; layout._updateVisibility(); modal = 1;
+    assert.equal(panel.visible, true, 'nested modal and Shell refresh keep panel restored');
+    modal = 0; context.global.stage.is_grabbed = false; context.global.stage.emit('notify::is-grabbed');
+    assert.equal(panel.visible, false, 'dismissed stage grab reevaluates immediately');
+    session.currentMode = 'ubuntu'; session.parentMode = 'user'; session.emit('updated');
+    assert.equal(panel.visible, false, 'Ubuntu primary user session remains eligible');
+    session.parentMode = null; session.currentMode = 'unlock-dialog'; session.isLocked = true; session.emit('updated'); assert.equal(panel.visible, true);
+    session.currentMode = 'user'; session.isLocked = false; session.emit('updated'); assert.equal(panel.visible, false);
+    for (const [property, value, signal] of [['minimized', true, 'notify::minimized'], ['decorated', true, 'notify::decorated'], ['fullscreen', true, 'notify::fullscreen']]) {
+        game[property] = value; game.emit(signal); assert.equal(panel.visible, true, property);
+        game[property] = false; game.emit(signal); assert.equal(panel.visible, false, property);
+    }
+    game.frame.y = 30; game.emit('position-changed'); assert.equal(panel.visible, true, 'edge touch has no overlap');
+    game.frame.y = 0; game.emit('position-changed'); assert.equal(panel.visible, false);
+    game.frame.width = 0; game.emit('size-changed'); assert.equal(panel.visible, true, 'invalid rectangle');
+    game.frame.width = 280; game.emit('size-changed'); assert.equal(panel.visible, false);
+    game.get_monitor = () => 1; game.emit('position-changed'); assert.equal(panel.visible, true, 'other monitor');
+    game.get_monitor = () => 0; game.emit('position-changed'); assert.equal(panel.visible, false);
+    layout.policyVisible = false; focused = null; display.emit('notify::focus-window'); assert.equal(panel.visible, false, 'current fullscreen policy remains hidden');
+    layout.policyVisible = true; layout._updateVisibility(); focused = game; display.emit('notify::focus-window');
+    live.PrepareRouting(''); assert.equal(panel.visible, true, 'routing reset releases ownership');
+    display.emit('notify::focus-window'); assert.equal(panel.visible, true, 'reset forgets window');
+    resize(1920, 1080); assert.equal(panel.visible, false, 'verified full-size window hides panel');
+    game.emit('unmanaged'); assert.equal(panel.visible, true, 'close restores immediately');
+    resize(1920, 1080); assert.equal(panel.visible, false);
+    live.disable(); assert.equal(panel.visible, true, 'disable restores');
+    assert.equal(panel.handlerCount(), 0); assert.equal(game.handlerCount(), 0);
+    game.emit('position-changed'); assert.equal(panel.visible, true, 'stale handlers cannot hide');
+    live.enable(); display.emit('notify::focus-window'); assert.equal(panel.visible, true, 're-enable forgets old ownership');
+    layout.policyVisible = false; layout._updateVisibility(); resize(1920, 1080);
+    layout.policyVisible = true; focused = null; display.emit('notify::focus-window');
+    assert.equal(panel.visible, false, 'pre-hidden panel is not claimed');
+    live.disable();
+    assert.equal(context.global.stage.handlerCount(), 0);
+    // Missing or replaced Shell hooks must leave resize operational and panel untouched.
+    layout.policyVisible = true; layout._updateVisibility(); focused = game;
+    const refresh = layout._updateVisibility;
+    delete context.global.stage.is_grabbed;
+    live.enable(); resize(1920, 1080); assert.equal(panel.visible, true, 'missing grab state declines intervention');
+    live.disable(); context.global.stage.is_grabbed = false;
+    layout._updateVisibility = null;
+    live.enable(); resize(1920, 1080); assert.equal(panel.visible, true, 'missing restore hook declines intervention');
+    live.disable(); layout._updateVisibility = refresh;
+    live.enable(); resize(1920, 1080); assert.equal(panel.visible, false);
+    layout._updateVisibility = null; display.emit('notify::focus-window');
+    assert.equal(panel.visible, true, 'cached policy hook restores after hook loss');
+    live.disable(); layout._updateVisibility = refresh;
+    live.enable(); resize(1920, 1080); assert.equal(panel.visible, false);
+    const replacementPanel = signals({...panel, visible: true}); layout.panelBox = replacementPanel;
+    layout.emit('monitors-changed'); assert.equal(replacementPanel.visible, true, 'replacement panel remains untouched');
+    assert.equal(panel.visible, true, 'old tracked actor is restored by Shell policy');
+    live.disable(); layout.panelBox = panel; panel.visible = true;
+    // Matching a game alone, or an unsuccessful resize, never grants ownership.
+    live.enable(); display.emit('notify::focus-window');
+    assert.equal(panel.visible, true, 'unmanaged matching game leaves panel visible');
+    const failed = reply(); live.ResizeFocusedAsync([1920, 1080], failed);
+    tick(2000); assert.equal(failed.errors.length, 1); assert.equal(panel.visible, true, 'timed-out resize does not hide');
+    const cancelled = reply(); live.ResizeFocusedAsync([1920, 1080], cancelled);
+    focused = null; display.emit('notify::focus-window'); focused = game;
+    display.emit('notify::focus-window'); assert.equal(cancelled.errors.length, 1);
+    assert.equal(panel.visible, true, 'cancelled resize does not hide');
+    resize(1920, 1080); assert.equal(panel.visible, false);
+    live.ConfigurePresets(configuration([], 'b'.repeat(64)));
+    assert.equal(panel.visible, true, 'routing replacement releases ownership');
+    display.emit('notify::focus-window'); assert.equal(panel.visible, true);
+    // A successful fixed resize started before a reset cannot reclaim old ownership.
+    const pending = reply(); live.ResizeFocusedAsync([1920, 1080], pending);
+    live.PrepareRouting(''); applySize(game); tick(); assert.equal(pending.values.length, 1);
+    assert.equal(panel.visible, true, 'reset fences pending fixed-size ownership');
+    live.disable();
+}

@@ -444,6 +444,33 @@ fn verified_executable(
         ))),
     }
 }
+fn verified_managed_files(system: &dyn System) -> Result<bool, InstallError> {
+    let mut all = true;
+    for (path, expected, mode) in [
+        (
+            crate::managed_keyd::BINARY_PATH,
+            crate::managed_keyd::binary(),
+            0o755,
+        ),
+        (
+            crate::managed_keyd::DROPIN_PATH,
+            crate::managed_keyd::DROPIN.as_bytes(),
+            0o644,
+        ),
+    ] {
+        match system.read(Path::new(path))? {
+            None => all = false,
+            Some(state) if state.uid == 0 && state.mode == mode && state.bytes == expected => {}
+            Some(_) => {
+                return Err(InstallError::Refused(format!(
+                    "managed keyd target {path} differs; manual review required"
+                )))
+            }
+        }
+    }
+    Ok(all)
+}
+
 fn existing_policy<S: System + ?Sized>(
     system: &S,
     policy: &[RootFile; 2],
@@ -1005,6 +1032,8 @@ fn install_inner(
                     MACCEL_POLICY_PATH,
                     SERVICE_PATH,
                     HELPER_PATH,
+                    crate::managed_keyd::BINARY_PATH,
+                    crate::managed_keyd::DROPIN_PATH,
                 ] {
                     root_remains |= system.read(Path::new(path))?.is_some();
                 }
@@ -1036,6 +1065,7 @@ fn install_inner(
     system.ensure_private_state(&env.data_home)?;
     let rules = policy(&env.login);
     let helper_exists = verified_helper(system, artifact)?;
+    let managed_exists = verified_managed_files(system)?;
     let policies_exist = system.policies_match(&rules)?;
     let extension = archive_files(&env)?;
     let expected_manifest = manifest_bytes(&extension);
@@ -1226,7 +1256,11 @@ fn install_inner(
     desired.push((manifest, expected_manifest, 0o600));
     let mut prior = Vec::new();
     let service_exists = verified_executable(system, Path::new(SERVICE_PATH), artifact)?;
-    let mut identical = service_exists && helper_exists && policies_exist && !report.repair_pending;
+    let mut identical = service_exists
+        && helper_exists
+        && managed_exists
+        && policies_exist
+        && !report.repair_pending;
     let legacy_known = system.legacy_extension_known()?;
     let legacy_was_enabled = if legacy_known {
         system.legacy_extension_enabled()?
@@ -1468,16 +1502,19 @@ fn install_inner(
         for (path, bytes, mode) in &desired {
             system.write_user(path, bytes, *mode)?;
         }
+        switching_service = true;
+        // Stop the producer before the authenticated helper changes the daemon.
+        // The helper releases its keyd operation lock before READY so startup can probe it.
+        system.service(ServiceAction::Stop)?;
         root_setup = Some(system.begin_root_setup(artifact)?);
         if !verified_executable(system, Path::new(SERVICE_PATH), artifact)?
             || !verified_helper(system, artifact)?
+            || !verified_managed_files(system)?
         {
             return Err(InstallError::System(
                 "root executable verification failed".into(),
             ));
         }
-        switching_service = true;
-        system.service(ServiceAction::Stop)?;
         system.service(ServiceAction::Reload)?;
         verify_resolved_command(system)?;
         system.service(ServiceAction::Enable)?;
@@ -2399,6 +2436,8 @@ impl System for RealSystem {
             HELPER_PATH,
             KEYD_POLICY_PATH,
             MACCEL_POLICY_PATH,
+            crate::managed_keyd::BINARY_PATH,
+            crate::managed_keyd::DROPIN_PATH,
         ]
         .iter()
         .any(|p| path == Path::new(p))
