@@ -1,17 +1,17 @@
-# Graph Report - feat-managed-panel-visibility  (2026-10-30)
+# Graph Report - release-v0.2.0  (2026-10-30)
 
 ## Corpus Check
-- 147 files · ~174,127 words
+- 149 files · ~175,699 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 172 file(s) not represented in the graph (top: .t 142, .conf 11, (none) 8)
 
 ## Summary
-- 2698 nodes · 6582 edges · 131 communities (114 shown, 17 thin omitted)
+- 2709 nodes · 6600 edges · 128 communities (112 shown, 16 thin omitted)
 - Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 293 edges (avg confidence: 0.83)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `5ae4c41c`
+- Built from commit: `d6df1a7e`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -22,7 +22,7 @@
 - live-ui-acceptance.mjs
 - rust_downloads.rs
 - install.rs
-- keyd.rs
+- rust_standard_settings.rs
 - rust_sensitivity.rs
 - setup_helper.rs
 - InstallError
@@ -38,7 +38,7 @@
 - api.rs
 - rust_keyd.rs
 - McsrToolkitExtension
-- RuntimeAdapter
+- TrackingRuntime
 - keyd.h
 - rust_runtime.rs
 - Profile
@@ -52,7 +52,7 @@
 - ServiceRuntime
 - with
 - apply.rs
-- ApiState
+- apply
 - rust_api.rs
 - paths.rs
 - keyboard.c
@@ -65,11 +65,11 @@
 - gnome.rs
 - RealRootSetup
 - GNOME Wayland focus probe
-- KeydController
-- CommandRunner
+- keyd.rs
+- BlockingDownload
 - pathbuf
-- .configure_inner
-- focus.rs
+- bounded
+- routing.rs
 - Rust single-binary release checklist
 - device.c
 - Borderless Minecraft Resize Implementation Plan
@@ -80,8 +80,7 @@
 - Key capture for binding fields
 - Borderless Minecraft resize design
 - MCSR Toolkit
-- resize-wayland.md
-- MCSR Toolkit v0.1.0
+- Review Focus
 - config.c
 - Uninstall keyd recovery implementation plan
 - daemon.c
@@ -93,10 +92,10 @@
 - AGENTS.md
 - keyd-focus-probe.sh script
 - mcsr-toolkit
-- .read
+- uninstall
 - keyd_helper.rs
 - parse_profile
-- downloads.rs
+- .apply_inner
 - ipc-reset.c
 - ServiceAction
 - test-io.c
@@ -105,7 +104,7 @@
 - Parallel execution ledger
 - Standard Settings Implementation Plan
 - Standard Settings integration
-- .listen_presets
+- FencedPeer
 - HelperFilesystem
 - keyd.c
 - MCSR Toolkit maccel sensitivity recovery design
@@ -114,34 +113,30 @@
 - usb-gadget.c
 - clear
 - Review Focus
-- bounded
+- Borderless full-size toggle live acceptance, 2026-10-30
 - MCSR Toolkit Rust single-binary design
 - managed_keyd.rs
-- SensitivityController<H>
+- Managed panel visibility live test, 2026-10-30
 - RootFile
 - HelperSystem
 - Borderless Full-Size Toggle Implementation Plan
 - usb-gadget.md
 - run.sh
 - usb-gadget.sh script
-- DownloadError
+- MCSR Toolkit v0.2.0 — release candidate
 - Managed keyd live validation, 2026-10-29
 - log.c
 - Live Keyd Startup Implementation Plan
 - Managed stock-panel visibility validation
 - MaccelAvailability
-- Product
 - Live keyd startup from an empty baseline
 - Borderless full-size alternative to fullscreen
 - DirectorySync
 - FakeSystem
 - Managed keyd and F3 routing implementation verification
-- FakeHelper
 - Enter opens and sends chat
-- v0.1.0-beta.3 candidate — 2026-10-29
 - Borderless full-size toggle: local implementation validation
 - Managed Minecraft panel visibility
-- NativeKeyd
 - Toolkit-managed keyd
 - _updateVisibility
 
@@ -160,24 +155,24 @@
 ## Surprising Connections (you probably didn't know these)
 - `Context and goal` --references--> `get()`  [INFERRED]
   docs/superpowers/specs/2026-10-06-maccel-sensitivity-recovery-design.md → integration/live-ui-acceptance.mjs
+- `Task 1: Panel ownership, lifecycle, and regressions` --references--> `show()`  [INFERRED]
+  docs/superpowers/plans/2026-10-30-managed-panel-visibility.md → tests/extension_harness.cjs
 - `Initial state and recovery` --references--> `clear()`  [INFERRED]
   docs/superpowers/evidence/2026-10-29-f3-keyd/live-validation.md → vendor/keyd/src/keyboard.c
 - `Global Constraints` --references--> `clear()`  [INFERRED]
   docs/superpowers/plans/2026-10-22-rust-single-binary.md → vendor/keyd/src/keyboard.c
 - `Privilege boundary and input safety` --references--> `clear()`  [INFERRED]
   docs/superpowers/specs/2026-10-22-rust-single-binary-design.md → vendor/keyd/src/keyboard.c
-- `Earlier automated recovery verification, 2026-10-05 (203-test run)` --references--> `clear()`  [INFERRED]
-  integration/acceptance-wayland.md → vendor/keyd/src/keyboard.c
 
 ## Import Cycles
 - 1-file cycle: `src/keyd.rs -> src/keyd.rs`
 - 2-file cycle: `src/mapping.rs -> src/options.rs -> src/mapping.rs`
 
-## Communities (131 total, 17 thin omitted)
+## Communities (128 total, 16 thin omitted)
 
 ### Community 0 - "rust_install.rs"
 Cohesion: 0.06
-Nodes (93): repair(), RoutingPlan, shortcut_parts(), Signal, aborted_root_commit_with_wait_error_still_restores_user_integration(), active_legacy_extension_hands_off_before_root_setup_and_remains_on_disk(), changed_extension_root_failure_preserves_shell_marker_and_old_lineage_for_retry(), changed_owned_extension_with_verified_lineage_waits_for_new_shell() (+85 more)
+Nodes (90): repair(), aborted_root_commit_with_wait_error_still_restores_user_integration(), active_legacy_extension_hands_off_before_root_setup_and_remains_on_disk(), changed_extension_root_failure_preserves_shell_marker_and_old_lineage_for_retry(), changed_owned_extension_with_verified_lineage_waits_for_new_shell(), completed_manifest_write_with_shell_marker_recovers_after_interrupted_root_setup(), conflicting_prior_enabled_uuids_are_not_silently_claimed_restored(), corrupted_staged_helper_never_publishes_passwordless_policy() (+82 more)
 
 ### Community 1 - "maccel_helper.rs"
 Cohesion: 0.06
@@ -188,44 +183,44 @@ Cohesion: 0.12
 Nodes (28): clear_reports_unsafe_when_config_is_untrusted_and_stop_fails(), clear_retries_initial_ipc_errors_then_requires_stable_readiness(), clear_stops_keyd_when_config_is_conflicting_or_writable(), concurrent_helper_invocation_is_refused_before_service_mutation(), DEVICE, existing_config_conflict_and_target_symlink_are_refused(), existing_managed_target_with_special_mode_is_refused(), failed_restart_rolls_back_and_failed_stop_reports_unsafe() (+20 more)
 
 ### Community 3 - "live-ui-acceptance.mjs"
-Cohesion: 0.06
-Nodes (62): File map, Global Constraints, Handoff, MCSR Toolkit maccel Sensitivity Recovery Implementation Plan, Review Focus, Task 1: Implement the isolated root helper, Task 2: Add the unprivileged fixed-command adapter, Task 3: Integrate startup, focus, and shutdown recovery (+54 more)
+Cohesion: 0.07
+Nodes (53): allowed, baselineSha, baseUrl, browser(), canonical(), CDP, checkGameClosed(), checkListeningSocket() (+45 more)
 
 ### Community 4 - "rust_downloads.rs"
-Cohesion: 0.19
-Nodes (22): ReleaseAsset, assert_preserved(), asset(), BrokenReader, corrupt_entry_data_preserves_previous_file(), deflated_jar(), destination_must_be_a_jar(), empty_manifest_is_not_a_valid_jar() (+14 more)
+Cohesion: 0.06
+Nodes (48): download_release(), DownloadError, Download, InvalidAssetUrl, InvalidDestination, InvalidJar, InvalidMetadata, InvalidRedirect (+40 more)
 
 ### Community 5 - "install.rs"
 Cohesion: 0.06
-Nodes (43): authenticated_status_command_has_a_deadline(), both_protected_recovery_histories_use_one_authenticated_status(), extension_digest(), extension_digest_from_fingerprints(), EXTENSION_UUID, ExtensionManifest, ExtensionStagingMarker, failed_commands_report_exit_status_and_both_output_streams() (+35 more)
+Nodes (45): authenticated_status_command_has_a_deadline(), both_protected_recovery_histories_use_one_authenticated_status(), extension_digest(), extension_digest_from_fingerprints(), EXTENSION_UUID, ExtensionManifest, ExtensionStagingMarker, failed_commands_report_exit_status_and_both_output_streams() (+37 more)
 
-### Community 6 - "keyd.rs"
-Cohesion: 0.12
-Nodes (14): Backups, child_that_does_not_read_stdin_is_killed_without_blocking_writer(), CommandFailure, Failed, TimedOut, CommandOutput, hung_child_is_killed_before_deadline_expires_twice(), HELPER (+6 more)
+### Community 6 - "rust_standard_settings.rs"
+Cohesion: 0.28
+Nodes (12): prepare_local(), bindings(), legacy_preserves_endings_blank_and_unrelated_values(), missing_and_unchanged_configs_are_handled_without_writes(), put(), rejects_legacy_redirect_chains_without_opening_shared_files(), rejects_malformed_and_duplicate_controls(), rejects_shared_redirects_without_touching_targets() (+4 more)
 
 ### Community 7 - "rust_sensitivity.rs"
-Cohesion: 0.25
-Nodes (17): cancelled_newer_restore_does_not_make_older_token_usable(), EYE_REPLY, eye_resize_failure_propagates_without_sensitivity_write(), f6_restores_exact_baseline_even_when_resize_fails(), f7_changes_sensitivity_only_after_exact_resize(), failed_eye_after_write_restores_while_focus_remains_effective(), failed_eye_and_failed_recovery_report_both_and_remain_pending(), focus_loss_during_eye_restores_before_reporting_success() (+9 more)
+Cohesion: 0.17
+Nodes (21): cancelled_newer_restore_does_not_make_older_token_usable(), EYE_REPLY, eye_resize_failure_propagates_without_sensitivity_write(), f6_restores_exact_baseline_even_when_resize_fails(), f7_changes_sensitivity_only_after_exact_resize(), failed_eye_after_write_restores_while_focus_remains_effective(), failed_eye_and_failed_recovery_report_both_and_remain_pending(), failed_preflight_invalidates_generation_until_restore() (+13 more)
 
 ### Community 8 - "setup_helper.rs"
 Cohesion: 0.06
 Nodes (61): HELPER_PATH, KEYD_POLICY_PATH, MACCEL_POLICY_PATH, SERVICE_PATH, abort_and_eof_roll_back_only_new_files(), check_components(), Decision, Abort (+53 more)
 
 ### Community 9 - "InstallError"
-Cohesion: 0.08
-Nodes (10): ExtensionAction, Disable, Enable, InstallError, System, InstallGuard, RootSetup, Fake (+2 more)
+Cohesion: 0.09
+Nodes (7): InstallError, System, InstallGuard, RootSetup, Fake, FakeSetup, FakeUninstallSetup
 
 ### Community 10 - "rust_apply.rs"
 Cohesion: 0.13
-Nodes (55): applies_two_closed_instances_and_restores_exact_bytes(), apply_publication_runs_under_marker_and_failure_keeps_marker(), backup_is_bound_to_launcher_root(), before_restore_runs_after_validation_and_before_marker(), changed_standard_file_rejects_restore_before_any_mutation(), dangling_recovery_record_symlinks_block_apply(), enter_chat_preserves_hotbar_through_apply_and_restore(), existing_mutation_lock_blocks_another_apply() (+47 more)
+Nodes (56): applies_two_closed_instances_and_restores_exact_bytes(), apply_publication_runs_under_marker_and_failure_keeps_marker(), backup_is_bound_to_launcher_root(), before_restore_runs_after_validation_and_before_marker(), changed_standard_file_rejects_restore_before_any_mutation(), dangling_recovery_record_symlinks_block_apply(), enter_chat_preserves_hotbar_through_apply_and_restore(), existing_mutation_lock_blocks_another_apply() (+48 more)
 
 ### Community 11 - "System"
 Cohesion: 0.08
-Nodes (10): enabled_catalog_probe_error_is_not_classified_as_disabled(), ExtensionState, Active, Error, Inactive, marker_parent_sync_failure_is_returned_before_root_setup(), restore_user(), sync_parent() (+2 more)
+Nodes (10): enabled_catalog_probe_error_is_not_classified_as_disabled(), ExtensionAction, Disable, Enable, install(), marker_parent_sync_failure_is_returned_before_root_setup(), restore_user(), sync_parent() (+2 more)
 
 ### Community 12 - "extension_harness.cjs"
 Cohesion: 0.03
-Nodes (36): assert, beforeDrain, beforeReconfigure, bindings, callbacks, centeredReply, centeredWindow, context (+28 more)
+Nodes (37): assert, beforeDrain, beforeReconfigure, bindings, callbacks, centeredReply, centeredWindow, context (+29 more)
 
 ### Community 13 - "app.js"
 Cohesion: 0.06
@@ -236,64 +231,64 @@ Cohesion: 0.13
 Nodes (8): Artifact, cached_policy_bytes_match(), Refused, RealSystem, start_root_transaction(), toolkit_object_from_introspection(), verified_executable(), verified_helper()
 
 ### Community 15 - "GnomeError"
-Cohesion: 0.09
-Nodes (8): GnomeError, GnomePeer, FencedPeer, NonReplyingPeer, BlockingGnome, FakeGnome, FakeGnome, FakeGnome
+Cohesion: 0.10
+Nodes (8): GnomeBridge<SessionPeer>, GnomeError, GnomePeer, NonReplyingPeer, BlockingGnome, FakeGnome, FakeGnome, FakeGnome
 
 ### Community 16 - "rust_profile.rs"
-Cohesion: 0.14
-Nodes (21): decode(), encode(), keyd_to_minecraft(), MappingError, minecraft_to_keyd(), plan_controls(), supported_other_binding(), game_bindings() (+13 more)
+Cohesion: 0.16
+Nodes (17): decode(), encode(), keyd_to_minecraft(), MappingError, minecraft_to_keyd(), plan_controls(), supported_other_binding(), chat_conflict_is_reported_instead_of_changing_other_control() (+9 more)
 
 ### Community 17 - "runner.py"
 Cohesion: 0.06
 Nodes (11): main(), run(), is_mouse_button(), Key, diff(), KeyStream, run_test(), printerr() (+3 more)
 
 ### Community 18 - "install_inner"
-Cohesion: 0.13
-Nodes (18): archive_files(), enable_extension_checked(), Environment, extension_enabled_from_output(), extension_named_in_output(), extension_state_from_info(), install_inner(), InstallReport (+10 more)
+Cohesion: 0.15
+Nodes (16): enable_extension_checked(), extension_enabled_from_output(), extension_named_in_output(), extension_state_from_info(), ExtensionState, Active, Error, Inactive (+8 more)
 
 ### Community 19 - "api.rs"
-Cohesion: 0.10
-Nodes (13): ApiResult, asset(), asset_at(), constant_time_eq(), gate(), get_profile(), index(), job() (+5 more)
+Cohesion: 0.11
+Nodes (15): ApiConfig, ApiResult, ApiState, asset(), asset_at(), constant_time_eq(), gate(), get_profile() (+7 more)
 
 ### Community 20 - "rust_keyd.rs"
-Cohesion: 0.14
-Nodes (27): activation_requires_effective_focus_and_no_mutation(), clear_refuses_privileged_call_without_private_durable_state(), clear_refuses_untrusted_helper_after_reset(), clear_resets_before_helper_and_blocks_activation_after_failure(), concurrent_controllers_cannot_share_clear_marker_or_activate_early(), concurrent_install_cannot_start_a_second_privileged_install(), concurrent_restore_blocks_other_controller_clear_and_activation(), delayed_install_keeps_both_snapshot_ids_and_restores_latest() (+19 more)
+Cohesion: 0.06
+Nodes (37): FocusEvent, FocusListener, FocusState, FocusTransition, Gained, Lost, Unchanged, HEARTBEAT_TIMEOUT (+29 more)
 
 ### Community 21 - "McsrToolkitExtension"
 Cohesion: 0.08
-Nodes (13): Global Constraints, Managed Panel Visibility Implementation Plan, Preparation, Review Focus, Self-review, Task 1: Panel ownership, lifecycle, and regressions, Task 2: Documentation, combined verification, and review, McsrToolkitExtension (+5 more)
+Nodes (12): Global Constraints, Managed Panel Visibility Implementation Plan, Preparation, Review Focus, Self-review, Task 1: Panel ownership, lifecycle, and regressions, Task 2: Documentation, combined verification, and review, McsrToolkitExtension (+4 more)
 
-### Community 22 - "RuntimeAdapter"
+### Community 22 - "TrackingRuntime"
 Cohesion: 0.06
-Nodes (6): RuntimeAdapter, BlockingRuntime, FakeDownload, RejectPublicationRuntime, Runtime, TrackingRuntime
+Nodes (6): BlockingRuntime, FakeDownload, NativeKeyd, RejectPublicationRuntime, Runtime, TrackingRuntime
 
 ### Community 24 - "rust_runtime.rs"
 Cohesion: 0.16
 Nodes (32): absent_optional_maccel_serves_observe_only_without_helper_calls(), clean_shutdown_releases_the_service_lock(), config(), duplicate_runtime_refuses_same_session_lock(), extension_connection_survives_a_non_minecraft_heartbeat(), failed_eye_recovery_still_clears_previous_keyd_bindings(), failed_keyd_discovery_keeps_fallback_vocabulary(), failed_startup_restore_prevents_eye_acceptance_and_http_binding() (+24 more)
 
 ### Community 25 - "Profile"
-Cohesion: 0.20
-Nodes (9): ApiBackend, NativeBackend, ApplyPreview, ApplyReport, ControlMapping, InstanceResult, Profile, report() (+1 more)
+Cohesion: 0.25
+Nodes (8): ApiBackend, NativeBackend, ApplyPreview, ApplyReport, InstanceResult, Profile, FakeBackend, report()
 
 ### Community 26 - ".apply_inner"
-Cohesion: 0.19
-Nodes (11): ApplyCoordinator, ApplyError, err(), KeydAdapter, mod_kind(), record_present(), valid_id(), T (+3 more)
+Cohesion: 0.17
+Nodes (13): ApplyCoordinator, ApplyError, err(), KeydAdapter, mod_kind(), record_present(), valid_id(), T (+5 more)
 
 ### Community 27 - "rust_runtime_process.rs"
-Cohesion: 0.15
+Cohesion: 0.17
 Nodes (6): active_python_style_service_lock_blocks_rust_start(), assert_restart_with_retained_writer(), fake_service_child(), FakeMaccel, KillOnDrop, signal_restart_keeps_writer_drains_stale_fifo_and_restores_before_new_eye()
 
 ### Community 28 - "runtime.rs"
 Cohesion: 0.10
-Nodes (10): ApiConfig, DownloadAdapter, NativeDownloads, process_cwds_under(), publish_active_preset(), reconcile_cycle(), reconciliation_unsafe(), ServiceLock (+2 more)
+Nodes (15): ResizeResult, safe_record(), apply_signal(), configure_routes(), err(), load_profile(), NativeDownloads, process_cwds_under() (+7 more)
 
 ### Community 29 - "rust_instances.rs"
-Cohesion: 0.09
-Nodes (27): discover_instances(), DiscoveryError, Instance, launcher_root(), locate_launcher_root(), ControlPlan, ManagedState, OptionsDocument (+19 more)
+Cohesion: 0.11
+Nodes (23): discover_instances(), ControlPlan, ManagedState, OptionsDocument, OptionsError, parse_options(), render_options(), render_windowed_options() (+15 more)
 
 ### Community 30 - ".start_with_adapters_inner"
-Cohesion: 0.19
-Nodes (9): apply_signal(), configure_routes(), discover_keys(), err(), load_profile(), RuntimeConfig, RuntimeError, ServiceRuntime<P, H> (+1 more)
+Cohesion: 0.20
+Nodes (6): DownloadAdapter, CommandRunner, SystemCommandRunner, discover_keys(), RuntimeConfig, ServiceRuntime<P, H>
 
 ### Community 31 - "Wayland integration acceptance"
 Cohesion: 0.08
@@ -312,27 +307,27 @@ Cohesion: 0.10
 Nodes (19): jobs, verify, name, on, pull_request, push, workflow_dispatch, permissions (+11 more)
 
 ### Community 35 - "apply.rs"
-Cohesion: 0.16
-Nodes (8): BackupFile, History, Manifest, MutationLock, new_id(), NEXT_BACKUP, Prepared, ConfigEdit
+Cohesion: 0.14
+Nodes (10): BackupFile, ControlMapping, History, Manifest, MutationLock, new_id(), NEXT_BACKUP, Prepared (+2 more)
 
-### Community 36 - "ApiState"
-Cohesion: 0.18
-Nodes (9): ApiError, ApiState, apply(), download(), Job, JobQueue, put_profile(), QueueInner (+1 more)
+### Community 36 - "apply"
+Cohesion: 0.14
+Nodes (9): ApiError, apply(), download(), Job, JobQueue, QueueInner, report_json(), restore() (+1 more)
 
 ### Community 37 - "rust_api.rs"
-Cohesion: 0.16
-Nodes (19): router(), state_dir(), completed_backup_id(), completed_job(), download_allowlist_and_unknown_job(), embedded_assets_session_and_status_have_ui_contract(), failed_runtime_apply_publication_keeps_marker_and_notifies_runtime(), failed_runtime_restore_publication_keeps_marker_and_notifies_runtime() (+11 more)
+Cohesion: 0.17
+Nodes (18): router(), state_dir(), completed_backup_id(), completed_job(), download_allowlist_and_unknown_job(), embedded_assets_session_and_status_have_ui_contract(), failed_runtime_apply_publication_keeps_marker_and_notifies_runtime(), failed_runtime_restore_publication_keeps_marker_and_notifies_runtime() (+10 more)
 
 ### Community 38 - "paths.rs"
-Cohesion: 0.15
-Nodes (10): atomic_replace(), directory_fd(), existing_permissive_parent_is_tightened_without_touching_records_or_data_home(), NEXT_TEMP, prepare_private_state(), prepare_private_state_for_uid(), private_child(), private_state_creation_ignores_permissive_umask_and_runtime_accepts_it() (+2 more)
+Cohesion: 0.18
+Nodes (7): directory_fd(), existing_permissive_parent_is_tightened_without_touching_records_or_data_home(), NEXT_TEMP, prepare_private_state(), prepare_private_state_for_uid(), private_child(), private_state_creation_ignores_permissive_umask_and_runtime_accepts_it()
 
 ### Community 39 - "keyboard.c"
 Cohesion: 0.17
 Nodes (29): abort_chord(), activate_layer(), cache_get(), cache_set(), calculate_main_loop_timeout(), check_chord_match(), chord_event_match(), clear_mod() (+21 more)
 
 ### Community 40 - "rust_assets.rs"
-Cohesion: 0.15
+Cohesion: 0.16
 Nodes (5): extension_archive(), web_asset(), app_javascript_is_embedded(), extension_archive_contains_sources_and_compiled_schema(), root_serves_embedded_html()
 
 ### Community 41 - "File map and task boundaries"
@@ -352,12 +347,12 @@ Cohesion: 0.25
 Nodes (5): ResizeError, Gnome, Inexact, InvalidSize, NotFocused
 
 ### Community 45 - "standard_settings.rs"
-Cohesion: 0.11
-Nodes (19): fail(), json_edit(), legacy_edit(), local_file(), prepare_local(), prepare_local_with_windowed(), StandardSettingsError, Unique (+11 more)
+Cohesion: 0.15
+Nodes (7): fail(), json_edit(), legacy_edit(), local_file(), prepare_local_with_windowed(), StandardSettingsError, Unique
 
 ### Community 46 - "gnome.rs"
-Cohesion: 0.12
-Nodes (15): accelerator(), bus_error(), DESTINATION, FOCUS_TIMEOUT, Helper, INTERFACE, is_function_key(), METHOD_TIMEOUT (+7 more)
+Cohesion: 0.18
+Nodes (10): accelerator(), bus_error(), DESTINATION, FOCUS_TIMEOUT, INTERFACE, is_function_key(), METHOD_TIMEOUT, OBJECT_PATH (+2 more)
 
 ### Community 47 - "RealRootSetup"
 Cohesion: 0.22
@@ -367,29 +362,25 @@ Nodes (4): abandoned_setup_terminates_privileged_process_group(), classify_root_
 Cohesion: 0.17
 Nodes (12): Chat focus risk, Failed chat safety test and cleanup, Failed supervised chat-only probe, 2026-10-04, GNOME Wayland focus probe, Initial environment at first inspection (2026-10-03), Observed after GNOME extension activation, Production observe-only service, 2026-10-04, Restart-helper recovery check, 2026-10-05 (+4 more)
 
-### Community 49 - "KeydController"
-Cohesion: 0.18
-Nodes (6): KeydController, KeydError, malformed_restore_payload_releases_pre_dispatch_marker(), NeverDispatch, private_dir_preflight_failure_releases_owned_marker(), valid_id()
-
-### Community 50 - "CommandRunner"
-Cohesion: 0.11
-Nodes (5): CommandRunner, SystemCommandRunner, BlockingDownload, FakeKeyd, FakeMaccel
+### Community 49 - "keyd.rs"
+Cohesion: 0.08
+Nodes (20): Backups, child_that_does_not_read_stdin_is_killed_without_blocking_writer(), CommandFailure, Failed, TimedOut, CommandOutput, hung_child_is_killed_before_deadline_expires_twice(), KeydController (+12 more)
 
 ### Community 51 - "pathbuf"
-Cohesion: 0.13
-Nodes (9): build_managed_keyd(), copy_tree(), EXTENSION_FILES, main(), verify_archive(), write_archive(), maccel_binary(), main() (+1 more)
+Cohesion: 0.10
+Nodes (12): build_managed_keyd(), copy_tree(), EXTENSION_FILES, main(), verify_archive(), write_archive(), DiscoveryError, launcher_root() (+4 more)
 
-### Community 52 - ".configure_inner"
-Cohesion: 0.22
-Nodes (4): is_minecraft_class(), canonical_shortcut(), GnomeBridge<P>, Peer
+### Community 52 - "bounded"
+Cohesion: 0.15
+Nodes (6): is_minecraft_class(), bounded(), canonical_shortcut(), GnomeBridge<P>, Peer, SessionPeer
 
-### Community 53 - "focus.rs"
-Cohesion: 0.09
-Nodes (10): FocusEvent, FocusListener, FocusState, FocusTransition, Gained, Lost, Unchanged, HEARTBEAT_TIMEOUT (+2 more)
+### Community 53 - "routing.rs"
+Cohesion: 0.24
+Nodes (6): game_bindings(), render_keyd_fragment(), RoutingPlan, shortcut_parts(), Signal, enter_opens_and_sends_chat()
 
 ### Community 54 - "Rust single-binary release checklist"
-Cohesion: 0.12
-Nodes (17): 2026-10-26 Enter dual-role run, Candidate and reproducible checks, Candidate verification, Historical v0.1.0-beta.1 preparation record, Preparation checklist, Publication verification, Publication verification, Release decision (+9 more)
+Cohesion: 0.07
+Nodes (27): 2026-10-26 Enter dual-role run, Candidate and reproducible checks, Candidate verification, Candidate verification, Historical v0.1.0-beta.1 preparation record, Live scope and readiness limits, Preparation checklist, Preparation checklist (+19 more)
 
 ### Community 55 - "device.c"
 Cohesion: 0.12
@@ -412,8 +403,8 @@ Cohesion: 0.25
 Nodes (7): Execution notes, Global Constraints, Integration recheck, Minecraft Control Picker Implementation Plan, Review Focus, Task 1: Searchable picker and profile integration, Verification results
 
 ### Community 60 - "maccel.rs"
-Cohesion: 0.21
-Nodes (7): COMMAND_TIMEOUT, empty_eye_probe_proves_noninteractive_permission_without_a_token(), EYE_REPLY, HELPER, SensitivityController, State, SUDO
+Cohesion: 0.12
+Nodes (9): COMMAND_TIMEOUT, empty_eye_probe_proves_noninteractive_permission_without_a_token(), EYE_REPLY, HELPER, SensitivityController, SensitivityController<H>, State, SUDO (+1 more)
 
 ### Community 61 - "Key capture for binding fields"
 Cohesion: 0.29
@@ -425,15 +416,11 @@ Nodes (10): Approaches, Borderless Minecraft resize design, Corrective fullscree
 
 ### Community 63 - "MCSR Toolkit"
 Cohesion: 0.22
-Nodes (9): Build and deterministic checks, Live keyd mode and recovery, Managed keyd and F3 priority (development build), MCSR Toolkit, Repair and uninstall, Resize presets, Run and use the UI, Rust executable and release status (+1 more)
+Nodes (9): Build and deterministic checks, Live keyd mode and recovery, Managed keyd and F3 priority, MCSR Toolkit, Repair and uninstall, Resize presets, Run and use the UI, Rust executable and release status (+1 more)
 
-### Community 64 - "resize-wayland.md"
-Cohesion: 0.20
-Nodes (6): Borderless full-size toggle live acceptance, 2026-10-30, Chat, release, and ordinary-input results, F3 priority results, Observed windowed transitions and focus recovery, Post-login repair and preparation, Verified cleanup and final scope
-
-### Community 65 - "MCSR Toolkit v0.1.0"
-Cohesion: 0.33
-Nodes (6): Candidate verification and artifact identity, Download and install, Highlights, Known limitations and live-test coverage, MCSR Toolkit v0.1.0, New since beta.3
+### Community 65 - "Review Focus"
+Cohesion: 0.22
+Nodes (9): File map, Global Constraints, Handoff, MCSR Toolkit maccel Sensitivity Recovery Implementation Plan, Review Focus, Task 1: Implement the isolated root helper, Task 2: Add the unprivileged fixed-command adapter, Task 3: Integrate startup, focus, and shutdown recovery (+1 more)
 
 ### Community 66 - "config.c"
 Cohesion: 0.17
@@ -464,24 +451,24 @@ Cohesion: 0.22
 Nodes (9): Borderless full-size toggle candidate (2026-10-30), Current Rust observation procedure, Current Rust release gates, Fullscreen restoration regression and recovery (2026-10-29), GNOME Wayland resize and sensitivity acceptance, Historical evidence (2026-10-04–06), Historical sensitivity and helper acceptance (2026-10-22), Managed stock-panel visibility candidate (2026-10-30) (+1 more)
 
 ### Community 73 - "SensitivityError"
-Cohesion: 0.25
-Nodes (3): InstalledMaccelPeer, MaccelPeer, SensitivityError
+Cohesion: 0.15
+Nodes (5): Helper, InstalledMaccelPeer, MaccelPeer, SensitivityError, FakeMaccel
 
-### Community 80 - ".read"
-Cohesion: 0.21
-Nodes (8): check_uninstall_records(), file_state_from_open(), http_probe(), marker_read_uses_opened_inode_when_path_is_replaced(), open_file_nofollow(), read_file_state(), real_temp_marker_requires_owner_and_mode_0600(), verified_managed_files()
+### Community 80 - "uninstall"
+Cohesion: 0.14
+Nodes (10): archive_files(), check_uninstall_records(), Environment, http_probe(), InstallReport, preflight(), refuse_after_stop(), stage_extension() (+2 more)
 
 ### Community 81 - "keyd_helper.rs"
 Cohesion: 0.15
 Nodes (19): apply_and_restart(), apply_snapshot(), atomic_write(), current(), DEVICE, DEVICE_NAME, FRAGMENT_NAME, Manifest (+11 more)
 
 ### Community 82 - "parse_profile"
-Cohesion: 0.14
-Nodes (12): ChatKeys, deserialize_bool(), deserialize_dimension(), key(), KeySet, modifier_family(), parse_dimension_string(), parse_profile() (+4 more)
+Cohesion: 0.15
+Nodes (13): ChatKeys, deserialize_bool(), deserialize_dimension(), key(), KeySet, modifier_family(), parse_dimension_string(), parse_profile() (+5 more)
 
-### Community 83 - "downloads.rs"
-Cohesion: 0.16
-Nodes (11): download_release(), Io, DownloadResult, HttpClient, HttpResponse, MAX_BYTES, MAX_METADATA_BYTES, MAX_REDIRECTS (+3 more)
+### Community 83 - ".apply_inner"
+Cohesion: 0.47
+Nodes (3): PresetController<P, H>, PresetError, rejected_profile_publication_recovers_before_newer_eye_write()
 
 ### Community 84 - "ipc-reset.c"
 Cohesion: 0.13
@@ -547,6 +534,10 @@ Nodes (18): File map, Global Constraints, Keyd Restart Recovery Implementation P
 Cohesion: 0.22
 Nodes (8): Execution ledger, F3 Priority and Managed Keyd Implementation Plan, Global Constraints, Review Focus, Task 1: Reproducible managed keyd engine and embedded asset, Task 2: Fixed-target install, selection, and restoration, Task 3: Compile shared routing and coordinate applied generation, Task 4: Review and user-facing validation record
 
+### Community 101 - "Borderless full-size toggle live acceptance, 2026-10-30"
+Cohesion: 0.33
+Nodes (6): Borderless full-size toggle live acceptance, 2026-10-30, Chat, release, and ordinary-input results, F3 priority results, Observed windowed transitions and focus recovery, Post-login repair and preparation, Verified cleanup and final scope
+
 ### Community 102 - "MCSR Toolkit Rust single-binary design"
 Cohesion: 0.29
 Nodes (7): Cutover, state, and failure handling, Executable and component boundaries, Goal and release boundary, MCSR Toolkit Rust single-binary design, Migration and verification strategy, Privilege boundary and input safety, Sources
@@ -554,6 +545,14 @@ Nodes (7): Cutover, state, and failure handling, Executable and component bounda
 ### Community 103 - "managed_keyd.rs"
 Cohesion: 0.29
 Nodes (5): BINARY_PATH, CAPABILITIES, DROPIN, DROPIN_PATH, UPSTREAM_REVISION
+
+### Community 104 - "Managed panel visibility live test, 2026-10-30"
+Cohesion: 0.33
+Nodes (6): First panel check, Focus and modal observations, Managed panel visibility live test, 2026-10-30, Post-login preparation, Staged for login, Verified cleanup
+
+### Community 105 - "RootFile"
+Cohesion: 0.33
+Nodes (3): existing_policy(), policy(), RootFile
 
 ### Community 106 - "HelperSystem"
 Cohesion: 0.21
@@ -563,9 +562,9 @@ Nodes (3): HelperSystem, RealSystem, restart_healthy()
 Cohesion: 0.17
 Nodes (11): Borderless Full-Size Toggle Implementation Plan, Global Constraints, Parallel execution ledger, Preparation, Review Focus, Self-review, Shared Interfaces and Dependencies, Task 1: Extension geometry toggle (+3 more)
 
-### Community 111 - "DownloadError"
-Cohesion: 0.18
-Nodes (9): DownloadError, Download, InvalidAssetUrl, InvalidDestination, InvalidJar, InvalidMetadata, InvalidRedirect, TooLarge (+1 more)
+### Community 111 - "MCSR Toolkit v0.2.0 — release candidate"
+Cohesion: 0.40
+Nodes (5): Candidate identity and publication boundary, Changes since v0.1.0, Download, installation and upgrade, Live evidence and known limitations, MCSR Toolkit v0.2.0 — release candidate
 
 ### Community 112 - "Managed keyd live validation, 2026-10-29"
 Cohesion: 0.18
@@ -580,16 +579,12 @@ Cohesion: 0.20
 Nodes (9): Global Constraints, Live Keyd Startup Implementation Plan, Parallel execution ledger, Plan self-review, Preparation, Review Focus, Task 1: Empty-config reset through the real IPC dispatcher, Task 2: Bounded readiness after restart (+1 more)
 
 ### Community 115 - "Managed stock-panel visibility validation"
-Cohesion: 0.25
-Nodes (8): Baseline, Combined checks, Frozen Task 1 candidate, Managed stock-panel visibility validation, Modal review repair, Provenance and execution, Regression-first development, Remaining live acceptance
+Cohesion: 0.22
+Nodes (9): API evidence, Baseline, Combined checks, Frozen Task 1 candidate, Managed stock-panel visibility validation, Modal review repair, Provenance and execution, Regression-first development (+1 more)
 
 ### Community 116 - "MaccelAvailability"
-Cohesion: 0.40
-Nodes (5): MaccelAvailability, Available, RecoveryUncertain, Unavailable, optional_maccel_availability()
-
-### Community 117 - "Product"
-Cohesion: 0.33
-Nodes (6): Lookup, Product, Launcher, Ninjabrain, resolve_release(), valid_asset_url()
+Cohesion: 0.22
+Nodes (6): MaccelAvailability, Available, RecoveryUncertain, Unavailable, optional_maccel_availability(), ServiceRuntime<SessionPeer, InstalledMaccelPeer>
 
 ### Community 118 - "Live keyd startup from an empty baseline"
 Cohesion: 0.29
@@ -607,17 +602,9 @@ Nodes (3): DirectorySync, RealDirectorySync, RecordingSync
 Cohesion: 0.40
 Nodes (4): Automated results, Limits, Managed keyd and F3 routing implementation verification, Review findings and regressions
 
-### Community 123 - "FakeHelper"
-Cohesion: 0.32
-Nodes (4): failed_preflight_invalidates_generation_until_restore(), FakeHelper, HelperState, unavailable_or_failed_helper_blocks_new_eye_writes_until_recovery()
-
 ### Community 124 - "Enter opens and sends chat"
 Cohesion: 0.29
 Nodes (7): Approaches, Behavior and constraints, Enter opens and sends chat, Intent, Limits, Verification and rollout, cancel()
-
-### Community 125 - "v0.1.0-beta.3 candidate — 2026-10-29"
-Cohesion: 0.33
-Nodes (6): Candidate verification, Preparation checklist, Publication verification, Remaining live gates, Scope and evidence, v0.1.0-beta.3 candidate — 2026-10-29
 
 ### Community 126 - "Borderless full-size toggle: local implementation validation"
 Cohesion: 0.33
@@ -628,28 +615,28 @@ Cohesion: 0.33
 Nodes (5): Behavior and ownership, Intent and selected approach, Managed Minecraft panel visibility, Scope and constraints, Verification
 
 ### Community 129 - "Toolkit-managed keyd"
-Cohesion: 0.50
+Cohesion: 0.67
 Nodes (3): Maintained patch, Routing transition protocol, Toolkit-managed keyd
 
 ## Knowledge Gaps
 - **45 isolated node(s):** `mcsr-toolkit`, `Launcher`, `Ninjabrain`, `InvalidMetadata`, `InvalidAssetUrl` (+40 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 772 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **17 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 780 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **16 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `clear()` connect `clear` to `MCSR Toolkit Rust single-binary design`, `keyboard.c`, `File map and task boundaries`, `Managed keyd live validation, 2026-10-29`, `GNOME Wayland focus probe`, `Review Focus`, `Wayland integration acceptance`?**
-  _High betweenness centrality (0.259) - this node is a cross-community bridge._
+  _High betweenness centrality (0.290) - this node is a cross-community bridge._
 - **Are the 7 inferred relationships involving `GnomeError` (e.g. with `.configure_presets()` and `.get_focus()`) actually correct?**
   _`GnomeError` has 7 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `mcsr-toolkit`, `Launcher`, `Ninjabrain` to the rest of the system?**
   _45 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `rust_install.rs` be split into smaller, more focused modules?**
-  _Cohesion score 0.05511346890657236 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06265143648321218 - nodes in this community are weakly interconnected._
 - **Why does `Review Focus` connect `clear` to `app.js`?**
-  _High betweenness centrality (0.124) - this node is a cross-community bridge._
+  _High betweenness centrality (0.140) - this node is a cross-community bridge._
 - **Should `maccel_helper.rs` be split into smaller, more focused modules?**
   _Cohesion score 0.05811027224891329 - nodes in this community are weakly interconnected._
 - **Why does `Task 1: Replace privileged reload with bounded restart and rollback` connect `app.js` to `clear`?**
-  _High betweenness centrality (0.122) - this node is a cross-community bridge._
+  _High betweenness centrality (0.132) - this node is a cross-community bridge._

@@ -1,5 +1,120 @@
 # Rust single-binary release checklist
 
+## v0.2.0 candidate — 2026-10-30
+
+Status: **candidate verified and independently reviewed (PASS); local release
+integration and tagging approved on 2026-10-30. Publication remains pending**.
+Cargo version: `0.2.0`; annotated release tag: `v0.2.0`.
+Release branch/worktree: `release/v0.2.0`, `.worktrees/release-v0.2.0/`.
+Development base: `d6df1a7edd5241917623da01af9e4e9914624b78`; pushed to `origin/dev`.
+No matching remote release branch/tag existed at preparation time. Prior
+published releases and their historical verification records below are retained.
+
+### Scope and preparation
+
+Includes the managed-keyd/F3 work since v0.1.0, empty-config reset and startup
+readiness fixes, windowed borderless toggles, transactional fullscreen preference
+preparation, and conditional stock GNOME 50 panel visibility. Release-only edits
+are the package version and documentation. Dependencies and runtime sources
+remain the reviewed development versions. See [candidate release notes](rust-release-notes.md).
+
+- [x] Push reviewed `dev`; verify remote identity.
+- [x] Create isolated release branch from reviewed development base.
+- [x] Set Cargo package and lockfile version to `0.2.0`; preserve dependency versions.
+- [x] Prepare release notes and README with live evidence and unresolved limits.
+- [x] Pass full automated checks and browser smoke checks for the release tree.
+- [x] Build optimized executable; pass embedded-asset tests.
+- [x] Stage exactly `mcsr-toolkit` and `mcsr-toolkit.sha256` under primary
+  `target/release-preparation/v0.2.0/`; verify exact identity/checksum.
+- [x] Record actual source-input manifest/fingerprint, ELF dependencies and GLIBC requirement.
+- [x] Obtain independent review of release metadata, version, artifact identity and limitations: **PASS**, no material findings. Independently verified all 211 inputs, fingerprint, exact staged pair, optimized-build identity, complete archive embedding, ELF/GLIBC requirements, history and links.
+- [x] Obtain explicit release-ready confirmation before committing release preparation,
+  squash-merging `release/v0.2.0` into `main` and tagging `v0.2.0`. The operator
+  approved local integration/tagging on 2026-10-30. Verify resulting refs directly;
+  publication and development synchronization remain separately authorized steps.
+- [ ] Obtain authorization for release push/publication; publish exact staged assets.
+- [ ] Verify release-commit CI and unauthenticated public downloads.
+- [ ] Obtain separate approval for `main` → `dev` `--no-ff` synchronization;
+  verify before release branch/worktree cleanup.
+
+### Verification and artifact identity
+
+Completed in `.worktrees/release-v0.2.0/` on Ubuntu 26.04.1 LTS,
+`x86_64-unknown-linux-gnu`, Rust/Cargo 1.98.1, Node.js 24.21.0 and GLib 2.88.0:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy --all-targets --locked -- -D warnings`: no issues.
+- `cargo test --locked`: 405 passed, 62 filtered, 23 reported suites, no failures.
+- `python3 packaging/keyd/test.py`: 94 upstream and 28 toolkit event cases,
+  held-output cleanup and daemon IPC empty-reset checks passed.
+- `node tests/extension_harness.cjs` and `node tests/ui_harness.cjs`: passed.
+- `node --test static/app.test.cjs`: 14 passed.
+- `node integration/live-ui-acceptance.mjs self-test`: passed.
+- `glib-compile-schemas --strict --dry-run extension/schemas`: passed.
+- `playwright-cli -s=release-v020 run-code --filename=tests/key_capture_browser.cjs`:
+  passed keyboard, all five mouse buttons, click-through, timeout, shortcuts,
+  profile save and mobile layout against a temporary static server with isolated
+  API responses. Browser/server closed afterward; installed input/service
+  settings were not changed.
+- `cargo build --release --locked`: passed.
+- `cargo test --release --locked --test rust_assets`: 6 passed.
+- `sha256sum --check mcsr-toolkit.sha256`: passed in the staged directory,
+  which contains exactly the executable and checksum. Staged binary matches the
+  release worktree's optimized executable byte for byte.
+- The complete extension archive appears byte-for-byte inside the executable;
+  its extension source matches the reviewed live-tested source SHA256
+  `6301f6ea24cc62d976ed972f050a3e537e7adef89288bea29674ffbe8278510e`.
+- `ldd`: all dependencies resolve. `readelf -d`: `libgcc_s.so.1`, `libm.so.6`,
+  `libc.so.6`, `ld-linux-x86-64.so.2`. Highest GLIBC symbol requirement: `2.39`.
+  No Python runtime library is linked. Other host versions remain unvalidated.
+- `graphify update .`: AST-only, 2709 nodes, 6600 edges, 128 communities.
+- Documentation relative links, unchanged historical checklist and whitespace
+  checks passed. Runtime/build sources match the development base exactly;
+  Cargo edits change only the toolkit package version.
+- Pushed development CI: [Rust run 40918580125](https://github.com/Undecember/mcsr/actions/runs/40918580125)
+  completed successfully for `d6df1a7`. This is development-base CI, not a
+  release-commit run or validation of a published release.
+
+| Identity | Value |
+| --- | --- |
+| Development base | `d6df1a7edd5241917623da01af9e4e9914624b78` |
+| Package version | `0.2.0` |
+| Actual source-input manifest fingerprint | `17152965bf210af3431560129c028b1fa82815c839c92a90b45efa8dbbaeabaa` |
+| Input manifest | `target/release-preparation/v0.2.0-source-inputs.sha256` (211 files) |
+| Executable SHA256 | `3ee69d63a5e8b7a8dba244dbdce01b6cdac35df1a6cdfa117a087a657c7f9242` |
+| Executable bytes | `13,932,728` |
+| Checksum bytes | `79` |
+| Staged assets | `target/release-preparation/v0.2.0/` in primary checkout |
+
+Build inputs include all tracked files under `src/`, `static/`, `extension/`,
+`packaging/` and `vendor/keyd/`, plus `build.rs`, `Cargo.toml` and `Cargo.lock`.
+This conservative manifest includes the embedded native keyd source and its
+retained license/provenance. Every recorded hash still matches the frozen
+release inputs. Documentation and Graphify outputs are not embedded build
+inputs. Supporting artifact/environment/check JSON records are beside the
+staged directory. Preserve both staged assets after review; rebuild only if
+inputs change, and refresh identity before readiness approval.
+
+### Live scope and readiness limits
+
+The development candidates passed the [toggle live checks](superpowers/evidence/2026-10-30-borderless-toggle-live.md)
+and [panel live checks](superpowers/evidence/2026-10-30-managed-panel-live.md).
+These establish single-monitor XWayland thin/full-size toggling, F3/chat behavior,
+panel hiding/top-strip input and overview/Run-dialog restoration on this host,
+under the explicitly temporary F-key map. Exact options/mod backup restoration,
+original keyboard settings, empty keyd and healthy observe-only cleanup were
+verified. One focus-loss resize cancellation occurred in each recorded run.
+They do not validate the version-bumped artifact on the live desktop.
+
+Alt+Tab with Tab→F3, default F13–F24 translation and native F11/menu fullscreen
+remain known limitations. Native Wayland, multiple monitors/scales, latest eye
+sensitivity, workspace gestures, panel disable/re-enable while hidden,
+lock/unlock, remapped logout/login/crash recovery, uninstall rollback/prompt
+counts and latest UI/new-instance scenarios retain their untested boundaries.
+The release decision must explicitly assess these limits; no unqualified
+end-to-end desktop acceptance is claimed.
+
+
 ## v0.1.0 stable candidate — 2026-10-29
 
 Status: **[v0.1.0 published as a stable GitHub release](https://github.com/Undecember/mcsr/releases/tag/v0.1.0)** at `2026-10-29T11:48:12Z` with `prerelease: false`. Release commit: `35a37b825ff34326294a89c0bdcf4f8a6e04900a`, annotated tag: `v0.1.0`. Both release-commit CI runs passed and both public assets were downloaded without authentication and verified byte-identical to the staged files. The operator explicitly selected a non-beta release. Candidate tag: `v0.1.0`; Cargo package version: `0.1.0`. Release branch: `release/v0.1.0`, forked from `dev` at `a62271da0439a1a87eca881f4927ac98af5e2006`. No remote stable tag or matching release branch existed at preparation time. Historical beta records below are retained unchanged.
