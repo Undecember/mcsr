@@ -37,10 +37,50 @@ impl KeySet {
                 "rightcontrol",
                 "leftmeta",
                 "rightmeta",
+                "apostrophe",
+                "backslash",
+                "backspace",
+                "comma",
+                "delete",
+                "dot",
+                "end",
+                "equal",
+                "grave",
+                "home",
+                "insert",
+                "leftbrace",
+                "minus",
+                "pause",
+                "rightbrace",
+                "semicolon",
+                "up",
+                "down",
+                "left",
+                "right",
+                "menu",
+                "capslock",
+                "numlock",
+                "scrolllock",
+                "pageup",
+                "pagedown",
+                "sysrq",
+                "kpplus",
+                "kpdot",
+                "kpenter",
+                "kpequal",
+                "kpasterisk",
+                "kpslash",
+                "kpminus",
+                "leftmouse",
+                "middlemouse",
+                "rightmouse",
+                "mouse1",
+                "mouse2",
             ]
             .map(str::to_string),
         );
         keys.extend((1..=24).map(|n| format!("f{n}")));
+        keys.extend((0..=9).map(|n| format!("kp{n}")));
         Self(keys)
     }
 
@@ -299,6 +339,14 @@ pub fn parse_profile(bytes: &[u8], keys: &KeySet) -> Result<Profile, ProfileErro
             return Err(ProfileError("invalid preset height".into()));
         }
         preset.shortcut = shortcut(&preset.shortcut, keys)?;
+        let destination = preset.shortcut.rsplit('+').next().unwrap_or_default();
+        if matches!(destination, "leftmouse" | "middlemouse" | "rightmouse")
+            || destination.starts_with("mouse")
+        {
+            return Err(ProfileError(
+                "resize shortcuts require a keyboard key".into(),
+            ));
+        }
         if !ids.insert(&preset.id) {
             return Err(ProfileError("duplicate preset id".into()));
         }

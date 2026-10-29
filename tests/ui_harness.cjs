@@ -18,12 +18,14 @@ class Node {
     for (const node of nodes) { node.parent = this; this.children.push(node); }
   }
   replaceChildren(...nodes) { this.children = []; this.text = ''; this.append(...nodes); }
+  get parentElement() { return this.parent; }
+  get isConnected() { return !this.removed && (!this.parent || this.parent.isConnected); }
   setAttribute() {}
   addEventListener(name, callback) { this.listeners.set(name, callback); }
-  emit(name) { return this.listeners.get(name)?.({preventDefault() {}, stopPropagation() {}, target: this}); }
-  remove() { this.parent.children = this.parent.children.filter(node => node !== this); }
+  emit(name, properties = {}) { return this.listeners.get(name)?.({preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {}, target: this, ...properties}); }
+  remove() { this.removed = true; this.parent.children = this.parent.children.filter(node => node !== this); }
   querySelectorAll(selector) {
-    const matches = node => ['input', 'select', 'option'].includes(selector) ? node.tag === selector
+    const matches = node => ['input', 'select', 'option', 'button'].includes(selector) ? node.tag === selector
       : node.dataset.field === selector.match(/^\[data-field="(.*)"\]$/)?.[1];
     return this.children.flatMap(node => [ ...(matches(node) ? [node] : []),
       ...node.querySelectorAll(selector) ]);
@@ -44,17 +46,21 @@ async function browser({deferProfile = false, initialProfile} = {}) {
     if (!ids.has(id)) ids.set(id, new Node());
     return ids.get(id);
   };
-  const document = {
+  const document = Object.assign(new Node('document'), {
     getElementById: get,
     createElement: tag => new Node(tag),
     createTextNode: text => { const node = new Node('text'); node.textContent = text; return node; },
     querySelectorAll: () => [],
     querySelector: selector => {
       const name = selector.match(/^\[name="(.*)"\]$/)[1];
-      if (!chats.has(name)) chats.set(name, new Node('input'));
+      if (!chats.has(name)) {
+        const input = new Node('input');
+        new Node('div').append(input);
+        chats.set(name, input);
+      }
       return chats.get(name);
     }
-  };
+  });
   const calls = [];
   let canonical = initialProfile || profile('j');
   let jobPath = '';
@@ -84,13 +90,17 @@ async function browser({deferProfile = false, initialProfile} = {}) {
     else throw new Error(`unexpected API request ${path}`);
     return {ok: true, json: async () => JSON.parse(JSON.stringify(body))};
   };
-  const context = {document, window: {location: {origin: 'http://127.0.0.1:8765'}}, fetch,
+  const window = Object.assign(new Node('window'), {location: {origin: 'http://127.0.0.1:8765'}});
+  const intervals = new Set();
+  const context = {document, window, fetch,
+    setInterval: callback => {intervals.add(callback); return callback;},
+    clearInterval: callback => intervals.delete(callback),
     setTimeout: callback => {callback(); return 0;}};
   vm.runInNewContext(source, context);
   await tick();
   get('backup-id').value = 'backup-b';
   const craftingTarget = () => get('crafting-rows').children[0].querySelectorAll('input')[1];
-  return {get, calls, craftingTarget, resolveProfile: () => resolveProfile(),
+  return {get, calls, document, chats, craftingTarget, resolveProfile: () => resolveProfile(),
     edit: value => {craftingTarget().value = value; get('profile-form').emit('input');}};
 }
 
@@ -171,5 +181,56 @@ async function browser({deferProfile = false, initialProfile} = {}) {
   picker.emit('change');
   await controls.get('save-profile').emit('click');
   assert.match(controls.get('notice').textContent, /Complete both fields/);
-  console.log('UI restore, draft race, control picker, and profile round-trip checks passed');
+  // Missing a capture button on any keystroke field, or adding one to an action,
+  // would make the intended flow inaccessible or record the wrong profile value.
+  const recording = await browser({initialProfile: {...profile('j'),
+    controls: {'key_key.jump': 'space'}, ninjabrain: {q: 'leftcontrol+n'},
+    presets: [{id: 'small', width: 800, height: 600, shortcut: 'f6'}]}});
+  const recordButtons = node => node.querySelectorAll('button').filter(button => button.dataset.field === 'record');
+  assert.equal(recordButtons(recording.get('controls-rows')).length, 1);
+  assert.equal(recordButtons(recording.get('crafting-rows')).length, 2);
+  assert.equal(recordButtons(recording.get('ninjabrain-rows')).length, 2);
+  assert.equal(recordButtons(recording.get('presets-rows')).length, 1);
+  assert.equal(recordButtons(recording.get('controls-rows').children[0].children[0]).length, 0,
+    'Minecraft actions are selected, never captured');
+  for (const input of recording.chats.values()) assert.equal(recordButtons(input.parentElement).length, 1);
+  recordButtons(recording.get('crafting-rows'))[0].emit('click');
+  recording.document.emit('mousedown', {button: 3});
+  assert.equal(recording.get('crafting-rows').querySelector('input').value, 's',
+    'Mouse sources require explicit keyd device enrollment');
+  recording.document.emit('keydown', {code: 'KeyS'});
+  await recording.get('preview-profile').emit('click');
+  assert.equal(recording.get('apply-profile').disabled, false);
+  const controlInput = recording.get('controls-rows').children[0].children[1].querySelector('input');
+  recordButtons(recording.get('controls-rows'))[0].emit('click');
+  assert.equal(controlInput.value, 'space', 'activation must not record itself');
+  assert.equal(recording.get('apply-profile').disabled, false, 'starting alone is not an edit');
+  recording.document.emit('keydown', {code: 'Backspace'});
+  assert.equal(controlInput.value, 'backspace');
+  assert.equal(recording.get('apply-profile').disabled, true, 'recording invalidates the preview');
+  recordButtons(recording.get('crafting-rows'))[1].emit('click');
+  recording.document.emit('mousedown', {button: 3});
+  assert.equal(recording.craftingTarget().value, 'mouse1');
+  const shortcut = recording.get('ninjabrain-rows').querySelectorAll('input')[1];
+  recordButtons(recording.get('ninjabrain-rows'))[1].emit('click');
+  recording.document.emit('keydown', {code: 'ControlRight', ctrlKey: true});
+  recording.document.emit('mousedown', {button: 4, ctrlKey: true});
+  assert.equal(shortcut.value, 'rightcontrol+mouse2');
+  const chat = recording.chats.get('cancel');
+  recordButtons(chat.parentElement)[0].emit('click');
+  recording.document.emit('keydown', {code: 'Escape'});
+  assert.equal(chat.value, 'esc');
+  const preset = recording.get('presets-rows').querySelector('[data-field="shortcut"]');
+  recordButtons(recording.get('presets-rows'))[0].emit('click');
+  recording.document.emit('mousedown', {button: 1});
+  assert.equal(preset.value, 'f6', 'GNOME shortcuts must reject mouse input');
+  recording.document.emit('keydown', {code: 'F8', altKey: true});
+  assert.equal(preset.value, 'leftalt+f8');
+  await recording.get('save-profile').emit('click');
+  const captured = recording.calls.filter(call => call.method === 'PUT').at(-1).data;
+  assert.deepEqual(captured.controls, {'key_key.jump': 'backspace'});
+  assert.equal(captured.crafting.s, 'mouse1');
+  assert.equal(captured.ninjabrain.q, 'rightcontrol+mouse2');
+  assert.equal(captured.presets[0].shortcut, 'leftalt+f8');
+  console.log('UI restore, draft race, control picker, input recording, and profile round-trip checks passed');
 })().catch(error => {console.error(error); process.exitCode = 1;});

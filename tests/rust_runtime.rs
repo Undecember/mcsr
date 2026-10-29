@@ -484,7 +484,10 @@ async fn failed_keyd_discovery_keeps_fallback_vocabulary() {
             .to_owned();
     for (body, status) in [
         (r#"{"crafting":{"f8":"s"}}"#, "200"),
-        (r#"{"crafting":{"kp1":"s"}}"#, "422"),
+        (r#"{"crafting":{"kp1":"s"}}"#, "200"),
+        (r#"{"crafting":{"backspace":"s"}}"#, "200"),
+        (r#"{"crafting":{"mouse1":"s"}}"#, "200"),
+        (r#"{"crafting":{"not_a_key":"s"}}"#, "422"),
     ] {
         let response = http(config.port, format!("PUT /api/profile HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nOrigin: http://127.0.0.1:{}\r\nX-MCSR-Session: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", config.port, config.port, token, body.len(), body)).await;
         assert!(

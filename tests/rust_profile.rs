@@ -323,3 +323,76 @@ fn preset_numeric_and_boolean_strings_match_python_normalization() {
     )
     .is_err());
 }
+
+#[test]
+fn recorded_keyboard_and_mouse_names_validate_without_discovery() {
+    for name in [
+        "backspace",
+        "delete",
+        "home",
+        "leftbrace",
+        "sysrq",
+        "kpenter",
+        "kp7",
+        "leftmouse",
+        "middlemouse",
+        "rightmouse",
+        "mouse1",
+        "mouse2",
+    ] {
+        let json = format!(r#"{{"crafting":{{"{name}":"k"}}}}"#);
+        assert!(
+            parse_profile(json.as_bytes(), &KeySet::fallback()).is_ok(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn mouse_bindings_encode_decode_remap_and_restore() {
+    for (name, minecraft) in [
+        ("leftmouse", "left"),
+        ("middlemouse", "middle"),
+        ("rightmouse", "right"),
+        ("mouse1", "4"),
+        ("mouse2", "5"),
+    ] {
+        let options = parse_options(b"key_key.jump:key.keyboard.space\n").unwrap();
+        let json = format!(r#"{{"controls":{{"key_key.jump":"{name}"}}}}"#);
+        let profile = parse(&json);
+        let plan = plan_controls(&options, &profile, None).unwrap();
+        assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+        assert_eq!(
+            plan.updates["key_key.jump"],
+            format!("key.mouse.{minecraft}")
+        );
+        let applied = parse_options(&render_options(&options, &plan)).unwrap();
+        let prior = plan.next_state;
+        let same = plan_controls(&applied, &profile, Some(&prior)).unwrap();
+        assert!(same.updates.is_empty());
+        let restored = plan_controls(&applied, &Profile::default(), Some(&prior)).unwrap();
+        // Removing a mapping preserves its original physical input, as for keyboard controls.
+        assert_eq!(restored.next_state.original["key_key.jump"], name);
+        let remap_json = format!(r#"{{"crafting":{{"{name}":"k"}}}}"#);
+        let remapped = plan_controls(&applied, &parse(&remap_json), None).unwrap();
+        assert_eq!(remapped.updates["key_key.jump"], "key.keyboard.k");
+    }
+}
+
+#[test]
+fn mouse_outputs_and_shortcuts_render_for_keyd_but_not_resize_presets() {
+    let profile = parse(
+        r#"{"crafting":{"q":"leftmouse"},"ninjabrain":{"mouse1":"leftcontrol+mouse2"},"chat":{"open_chat":"middlemouse"}}"#,
+    );
+    let bindings = game_bindings(&profile);
+    assert!(bindings.contains(&"q = leftmouse".to_string()));
+    assert!(bindings.contains(&"mouse1 = C-mouse2".to_string()));
+    assert!(bindings.contains(&"middlemouse = togglem(mcsr_chat, middlemouse)".to_string()));
+    for mouse in ["leftmouse", "mouse1", "mouse2"] {
+        let json = format!(
+            r#"{{"presets":[{{"id":"small","width":800,"height":600,"shortcut":"leftcontrol+{mouse}"}}]}}"#
+        );
+        let error = parse_profile(json.as_bytes(), &KeySet::fallback()).unwrap_err();
+        assert!(error.to_string().contains("keyboard"), "{error}");
+    }
+}

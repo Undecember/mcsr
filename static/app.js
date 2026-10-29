@@ -60,7 +60,143 @@ function canApply(status, preview, savedRevision, currentRevision, busy) {
     preview.instances.every(item => item.status === 'ready' || item.status === 'unchanged'));
 }
 
-if (typeof module !== 'undefined') module.exports = { canApply, profileFromRows, findMinecraftControls };
+const KEY_CODES = {
+  Backspace: 'backspace', Tab: 'tab', Enter: 'enter', Escape: 'esc', Space: 'space',
+  Minus: 'minus', Equal: 'equal', BracketLeft: 'leftbrace', BracketRight: 'rightbrace',
+  Backslash: 'backslash', Semicolon: 'semicolon', Quote: 'apostrophe', Backquote: 'grave',
+  Comma: 'comma', Period: 'dot', Slash: 'slash', CapsLock: 'capslock', NumLock: 'numlock',
+  ScrollLock: 'scrolllock', PrintScreen: 'sysrq', Pause: 'pause', Insert: 'insert',
+  Delete: 'delete', Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown',
+  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', ContextMenu: 'menu',
+  ShiftLeft: 'leftshift', ShiftRight: 'rightshift', ControlLeft: 'leftcontrol',
+  ControlRight: 'rightcontrol', AltLeft: 'leftalt', AltRight: 'rightalt',
+  MetaLeft: 'leftmeta', MetaRight: 'rightmeta', NumpadAdd: 'kpplus',
+  NumpadSubtract: 'kpminus', NumpadMultiply: 'kpasterisk', NumpadDivide: 'kpslash',
+  NumpadDecimal: 'kpdot', NumpadEnter: 'kpenter', NumpadEqual: 'kpequal'
+};
+const MOUSE_KEYS = ['leftmouse', 'middlemouse', 'rightmouse', 'mouse1', 'mouse2'];
+const MODIFIERS = [['control', 'ctrlKey'], ['shift', 'shiftKey'], ['alt', 'altKey'], ['meta', 'metaKey']];
+
+function keyboardKey(code) {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^Numpad[0-9]$/.test(code)) return `kp${code.slice(6)}`;
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code.toLowerCase();
+  return Object.hasOwn(KEY_CODES, code) ? KEY_CODES[code] : null;
+}
+
+// One recorder owns page input while listening. Keep the trailing mouse gesture
+// suppressed after committing so it cannot click Remove, navigate, or open a menu.
+function createInputRecorder(root, view, clock = {
+  now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms),
+  clearInterval: id => clearInterval(id)
+}) {
+  let active = null, trailing = null;
+  const consume = event => { event.preventDefault(); event.stopImmediatePropagation(); };
+  function stop(text = 'Recording stopped. Binding unchanged.') {
+    if (!active) return;
+    const previous = active;
+    active = null;
+    clock.clearInterval(previous.timer);
+    previous.onStatus(text);
+    previous.onStop?.();
+  }
+  function ready() {
+    if (!active) return false;
+    if (!active.input.isConnected) stop();
+    else if (clock.now() >= active.deadline) stop('Recording timed out. Binding unchanged.');
+    return Boolean(active);
+  }
+  function status(hint) {
+    if (!ready()) return;
+    if (hint !== undefined) active.hint = hint;
+    const seconds = Math.ceil((active.deadline - clock.now()) / 1000);
+    active.onStatus(`${active.hint || (active.allowMouse ? 'Press a key or mouse button…' : 'Press a key…')} ${seconds}s`);
+  }
+  function commit(key, event) {
+    const current = active;
+    let value = key;
+    if (current.shortcut) {
+      const modifiers = MODIFIERS.flatMap(([family, flag]) => {
+        const held = [...current.modifiers].filter(name => name.endsWith(family));
+        return event[flag] || held.length ? [held.at(-1) || `left${family}`] : [];
+      });
+      value = [...modifiers, key].join('+');
+    }
+    const different = current.input.value !== value;
+    current.input.value = value;
+    stop(`Recorded ${value}.`);
+    if (different) current.onChange();
+  }
+  root.addEventListener('keydown', event => {
+    if (!ready()) {
+      if (trailing?.code === event.code) consume(event);
+      return;
+    }
+    consume(event);
+    if (event.repeat || event.isComposing) return;
+    const key = keyboardKey(event.code);
+    if (!key) { status('Unsupported key. Try another input or enter it manually.'); return; }
+    const modifier = MODIFIERS.some(([family]) => key.endsWith(family));
+    if (active.shortcut && modifier) {
+      active.modifiers.add(key);
+      status('Hold modifiers and press the shortcut key…');
+      return;
+    }
+    trailing = {code: event.code, until: Infinity};
+    commit(key, event);
+  }, true);
+  root.addEventListener('keyup', event => {
+    if (ready()) {
+      consume(event);
+      active.modifiers.delete(keyboardKey(event.code));
+    } else if (trailing?.code === event.code && clock.now() < trailing.until) {
+      consume(event);
+      trailing = null;
+    }
+  }, true);
+  root.addEventListener('pointerdown', event => {
+    trailing = null;
+    // Canceling pointerdown suppresses compatibility mousedown in browsers.
+    if (ready()) event.stopImmediatePropagation();
+  }, true);
+  root.addEventListener('mousedown', event => {
+    trailing = null;
+    if (!ready()) return;
+    consume(event);
+    trailing = {button: event.button, until: Infinity};
+    const key = MOUSE_KEYS[event.button];
+    if (!active.allowMouse || !key) {
+      status(active.allowMouse ? 'Unsupported mouse button. Try another input.' :
+        active.mouseReason || 'This shortcut requires a keyboard key.');
+      return;
+    }
+    commit(key, event);
+  }, true);
+  for (const type of ['pointerup', 'mouseup', 'click', 'auxclick', 'contextmenu']) {
+    root.addEventListener(type, event => {
+      if (ready() || (trailing && clock.now() < trailing.until &&
+          (event.button === trailing.button || (trailing.code && type === 'click')))) {
+        consume(event);
+        if (trailing && (type === 'mouseup' || type === 'pointerup')) trailing.until = clock.now() + 1000;
+        if (!active && (type === 'click' || type === 'auxclick')) trailing = null;
+      }
+    }, true);
+  }
+  view.addEventListener('blur', () => {stop(); trailing = null;});
+  return {
+    start(options) {
+      stop();
+      trailing = null;
+      active = {...options, modifiers: new Set(), deadline: clock.now() + 5000, hint: ''};
+      status();
+      active.timer = clock.setInterval(() => status(), 100);
+    },
+    stop
+  };
+}
+
+if (typeof module !== 'undefined') module.exports = { canApply, profileFromRows, findMinecraftControls, keyboardKey, createInputRecorder };
 
 if (typeof document !== 'undefined') {
   const $ = id => document.getElementById(id);
@@ -100,6 +236,8 @@ if (typeof document !== 'undefined') {
     );
   }
 
+  const recorder = createInputRecorder(document, window);
+
   function rowInput(label, value = '') {
     const wrapper = element('label');
     wrapper.append(element('span', 'sr-only', label));
@@ -109,6 +247,39 @@ if (typeof document !== 'undefined') {
     input.placeholder = label;
     input.setAttribute('aria-label', label);
     wrapper.append(input);
+    return wrapper;
+  }
+
+  function attachRecorder(wrapper, input, label, shortcut = false, allowMouse = true, mouseReason = '') {
+    const button = element('button', 'record-input quiet', 'Record input…');
+    button.type = 'button';
+    button.dataset.field = 'record';
+    button.setAttribute('aria-label', `Record ${label.toLowerCase()}`);
+    const status = element('span', 'record-status');
+    status.dataset.field = 'record-status';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    button.addEventListener('click', () => {
+      button.textContent = 'Listening…';
+      button.setAttribute('aria-pressed', 'true');
+      input.readOnly = true;
+      recorder.start({input, shortcut, allowMouse, mouseReason, onChange: changed,
+        onStatus: text => {if (status.textContent !== text) status.textContent = text;},
+        onStop: () => {
+          button.textContent = 'Record input…';
+          button.setAttribute('aria-pressed', 'false');
+          input.readOnly = false;
+        }
+      });
+    });
+    wrapper.append(button, status);
+  }
+
+  function keyInput(label, value = '', shortcut = false, allowMouse = true, mouseReason = '') {
+    const wrapper = element('div', 'binding-field');
+    const field = rowInput(label, value);
+    wrapper.append(field);
+    attachRecorder(wrapper, field.querySelector('input'), label, shortcut, allowMouse, mouseReason);
     return wrapper;
   }
 
@@ -176,14 +347,16 @@ if (typeof document !== 'undefined') {
     return wrapper;
   }
 
+  const mouseSourceHelp = 'Mouse triggers require explicit keyd mouse-device setup. Press a keyboard key.';
+
   function addMappingRow(section, source = '', target = '', silent = false) {
     const row = element('div', 'mapping-row');
-    row.append(section === 'controls' ? controlPicker(source) : rowInput(fields[section][0], source),
-      rowInput(fields[section][1], target));
+    row.append(section === 'controls' ? controlPicker(source) : keyInput(fields[section][0], source, false, false, mouseSourceHelp),
+      keyInput(fields[section][1], target, section === 'ninjabrain'));
     const remove = element('button', 'remove', 'Remove');
     remove.type = 'button';
     remove.setAttribute('aria-label', `Remove ${section} row`);
-    remove.addEventListener('click', () => { row.remove(); changed(); });
+    remove.addEventListener('click', () => { recorder.stop(); row.remove(); changed(); });
     row.append(remove);
     $(`${section}-rows`).append(row);
     if (!silent) changed();
@@ -195,7 +368,8 @@ if (typeof document !== 'undefined') {
       ['id', 'Preset name', 'text'], ['width', 'Width', 'number'],
       ['height', 'Height', 'number'], ['shortcut', 'Shortcut', 'text']
     ]) {
-      const wrapper = rowInput(label, preset[key] ?? '');
+      const wrapper = key === 'shortcut'
+        ? keyInput(label, preset[key] ?? '', true, false) : rowInput(label, preset[key] ?? '');
       const input = wrapper.querySelector('input');
       input.dataset.field = key;
       input.type = type;
@@ -213,7 +387,7 @@ if (typeof document !== 'undefined') {
     const remove = element('button', 'remove', 'Remove');
     remove.type = 'button';
     remove.setAttribute('aria-label', 'Remove preset');
-    remove.addEventListener('click', () => { row.remove(); changed(); });
+    remove.addEventListener('click', () => { recorder.stop(); row.remove(); changed(); });
     row.append(remove);
     $('presets-rows').append(row);
     if (!silent) changed();
@@ -261,6 +435,7 @@ if (typeof document !== 'undefined') {
   }
 
   function fillProfile(profile) {
+    recorder.stop();
     state.savedProfile = profile;
     for (const section of Object.keys(fields)) {
       $(`${section}-rows`).replaceChildren();
@@ -446,6 +621,11 @@ if (typeof document !== 'undefined') {
     } catch (error) { message('notice', `Could not load toolkit: ${error.message}`, 'error'); }
   }
 
+  for (const [name, label] of [['open_chat', 'Open chat'], ['open_command', 'Open command'],
+    ['send', 'Send'], ['cancel', 'Cancel']]) {
+    const input = document.querySelector(`[name="${name}"]`);
+    attachRecorder(input.parentElement, input, label, false, false, mouseSourceHelp);
+  }
   $('profile-form').addEventListener('submit', event => event.preventDefault());
   $('profile-form').addEventListener('input', changed);
   $('profile-form').addEventListener('change', event => {

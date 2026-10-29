@@ -137,13 +137,34 @@ fn minecraft_to_keyd(key: &str) -> Option<String> {
 }
 
 fn encode(key: &str) -> Result<String, MappingError> {
+    let mouse = match key {
+        "leftmouse" => Some("left"),
+        "middlemouse" => Some("middle"),
+        "rightmouse" => Some("right"),
+        "mouse1" => Some("4"),
+        "mouse2" => Some("5"),
+        _ => None,
+    };
+    if let Some(button) = mouse {
+        return Ok(format!("key.mouse.{button}"));
+    }
     keyd_to_minecraft(key)
         .map(|name| format!("key.keyboard.{name}"))
         .ok_or_else(|| MappingError(format!("unsupported Minecraft key: {key}")))
 }
 
 fn decode(binding: &str) -> Option<String> {
-    minecraft_to_keyd(binding.strip_prefix("key.keyboard.")?)
+    if let Some(key) = binding.strip_prefix("key.keyboard.") {
+        return minecraft_to_keyd(key);
+    }
+    match binding.strip_prefix("key.mouse.")? {
+        "left" => Some("leftmouse".into()),
+        "middle" => Some("middlemouse".into()),
+        "right" => Some("rightmouse".into()),
+        "4" => Some("mouse1".into()),
+        "5" => Some("mouse2".into()),
+        _ => None,
+    }
 }
 
 fn supported_other_binding(binding: &str) -> bool {
