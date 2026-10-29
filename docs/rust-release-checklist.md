@@ -1,5 +1,51 @@
 # Rust single-binary release checklist
 
+## v0.1.0-beta.3 candidate — 2026-10-29
+
+Status: **release-ready beta candidate; local integration approved, publication pending**. Preparation is on `release/v0.1.0-beta.3`, forked from reviewed `dev` commit `e3090238f9317927dfab175bef3cce1c896f6be8`. At release-ready approval, the published release remains beta.2. Cargo package version remains `0.1.0`, following the existing beta tag/hash convention. No stable-release acceptance is claimed.
+
+### Scope and evidence
+
+Beta.3 contains the keyd uninstall recovery and root-status diagnostic fixes merged through `17da14a` / `e309023`. On the supervised device, the old installed uninstaller failed because `/usr/bin/keyd` was absent while `/usr/bin/keyd.rvaiya` existed. A temporary compatibility link exposed a second failure: `bind reset` exited 255 with empty stdout/stderr when `/etc/keyd` was empty. The link was removed. The matching installed `doctor` reported **Preflight ready**. Downloaded beta.2 and installed beta.1 hashes differed, explaining why the downloaded diagnostic could not verify protected recovery state. These observations reproduce failures; they do not establish successful uninstall or acceptance of this new candidate.
+
+The fix uses the existing trusted helper clear/restart and daemon health checks instead of a redundant client reset. It preserves verification errors and conservative refusal on unknown/malformed status, including policy-only protected state. Regression tests cover empty configurations, trusted rvaiya/fallback selection, unsafe clients, recovery failure retention/service restart, and visible mutation-blocking diagnostics. Independent per-task and combined code reviews passed before the fix merged into `dev`.
+
+### Preparation checklist
+
+- [x] Select candidate `v0.1.0-beta.3` using the established tag format; confirm no remote beta.3 tag exists during preparation.
+- [x] Identify binary source base `e3090238f9317927dfab175bef3cce1c896f6be8` and retain its `Cargo.lock`. Release documentation edits do not change application source, embedded inputs, or lockfile.
+- [x] Run formatting, Clippy, complete Rust tests, extension/UI harnesses, live-UI fixture self-test, and strict schema validation.
+- [x] Run the existing browser input-recording smoke test with isolated API responses and no live service operations.
+- [x] Build the optimized executable and pass release embedded-asset tests.
+- [x] Stage exactly `mcsr-toolkit` and `mcsr-toolkit.sha256` in the primary checkout's `target/release-preparation/v0.1.0-beta.3/`; verify their checksum and inspect ELF dependencies.
+- [x] Complete independent review of these release notes, checklist, candidate identity, and retained live limitations: **PASS**, no material findings. The staged checksum, byte count, ELF dependencies, and GLIBC requirement were independently verified.
+- [x] With release integration approval, fast-forward local `main` from beta.1 (`d0f6974`) to the published beta.2 `origin/main` (`105a32b`). Remote state was rechecked and the resulting local `main` matches the beta.2 tag.
+- [x] Obtain explicit confirmation that the release is ready before squash-merging into release-only `main` and tagging the resulting release commit. The operator approved local release integration on 2026-10-29.
+- [ ] Obtain authorization to push/publish the reviewed prerelease and the exact two staged assets.
+- [ ] Verify the exact public downloads against the staged executable and checksum after publication.
+- [ ] Obtain approval to synchronize tagged `main` back into `dev` using `git merge --no-ff`; verify before release-branch/worktree cleanup.
+
+### Candidate verification
+
+Completed locally using Ubuntu 26.04.1 LTS, Linux 7.0.0-38-generic, Rust/Cargo 1.98.1 (`x86_64-unknown-linux-gnu`), Node.js 24.21.0, and GLib 2.88.0:
+
+- `cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings`: passed.
+- `cargo test --locked -- --test-threads=1`: passed, 325 reported test results across 21 suites. Serial execution is used because earlier default parallel runs of the fix exposed intermittent runtime lock/timing failures; isolated retries and full serial runs passed. The parallel-suite issue remains a validation limitation, not a code change in this candidate.
+- `node tests/extension_harness.cjs`, `node tests/ui_harness.cjs`, and `node integration/live-ui-acceptance.mjs self-test`: passed.
+- `glib-compile-schemas --strict --dry-run extension/schemas`: passed.
+- `playwright-cli -s=beta3-release run-code --filename=tests/key_capture_browser.cjs` with a local static server and isolated API responses: passed in headless Chrome. Keyboard capture, all five supported mouse buttons, click-through suppression, timeout, shortcuts, profile save, and mobile layout passed. The temporary server and browser session were closed.
+- `cargo build --release --locked` and `cargo test --release --locked --test rust_assets`: passed; all 5 embedded-asset tests passed.
+- `sha256sum --check mcsr-toolkit.sha256` in the staged candidate directory: `mcsr-toolkit: OK`. Executable is 12,730,704 bytes; SHA256 `98154ab5152ab73029bf4f9ac753514870abed6b6b4ad6803453cfadd20afc14`.
+- `ldd` resolved every dependency. `readelf -d` lists `libgcc_s.so.1`, `libm.so.6`, `libc.so.6`, and `ld-linux-x86-64.so.2`; no Python runtime library is linked. Highest required GLIBC symbol version is `2.39`. Cross-version runtime compatibility was not tested.
+
+Build/test commands ran from the release worktree with `CARGO_TARGET_DIR` pointing to the primary checkout's `target/` cache. Staged release files are copies of that verified build. Do not rebuild or replace them without updating the checksum and recorded identity. Local candidate verification does not establish future public download identity or CI status for a future release commit.
+
+### Remaining live gates
+
+Successful live uninstall with the rebuilt beta.3 candidate, rollback, and authentication prompt counts remain unvalidated. No installed executable/helper, keyd configuration, sensitivity, service, or recovery record was changed during candidate preparation. Existing helpers with a different hash still require manual review before upgrade; running the matching installed `doctor` diagnoses recovery but does not update an old uninstaller. Do not treat the old-device failure reproduction or automated regression checks as successful live acceptance.
+
+The existing deferred logout/login, lock/unlock and crash/restart while live keyd remapping is active, installed-binary new-instance Restore cycle, and beta.2 picker/input recording checks on the Minecraft/GNOME device remain deferred. The detailed historical record and supervised checklist below are retained.
+
 ## v0.1.0-beta.2 candidate — 2026-10-29
 
 Status: **[`v0.1.0-beta.2` published as a GitHub prerelease](https://github.com/Undecember/mcsr/releases/tag/v0.1.0-beta.2)** at `2026-10-29T05:36:47Z`. Release-only `main` and synchronized `dev` point to tagged release commit `105a32bde56a0694dac894520ae079f81388d2b0` at publication. Target support remains Ubuntu GNOME Shell 50 on x86_64 Wayland; the automated build host is Ubuntu 24.04.5 LTS and does not establish live GNOME acceptance.
