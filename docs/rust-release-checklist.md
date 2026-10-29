@@ -2,7 +2,7 @@
 
 ## v0.1.0-beta.2 candidate — 2026-10-29
 
-Status: **local `v0.1.0-beta.2` candidate prepared and verified**. No tag, main merge, push, or public release has been created by this preparation. Target support remains Ubuntu GNOME Shell 50 on x86_64 Wayland; the automated build host is Ubuntu 24.04.5 LTS and does not establish live GNOME acceptance.
+Status: **[`v0.1.0-beta.2` published as a GitHub prerelease](https://github.com/Undecember/mcsr/releases/tag/v0.1.0-beta.2)** at `2026-10-29T05:36:47Z`. Release-only `main` and synchronized `dev` point to tagged release commit `105a32bde56a0694dac894520ae079f81388d2b0` at publication. Target support remains Ubuntu GNOME Shell 50 on x86_64 Wayland; the automated build host is Ubuntu 24.04.5 LTS and does not establish live GNOME acceptance.
 
 - [x] Version selected: `v0.1.0-beta.2`; retain Cargo package `0.1.0`, following beta.1's tag/hash convention.
 - [x] Identify application source base: `8b81d6f7a681492e2dcb88eaf625abc84f4119ce` with its existing `Cargo.lock`. Local configuration and generated graph changes are excluded from binary inputs.
@@ -11,9 +11,9 @@ Status: **local `v0.1.0-beta.2` candidate prepared and verified**. No tag, main 
 - [x] Build release executable and run release embedded-asset tests.
 - [x] Stage the executable and matching checksum under `target/release-preparation/v0.1.0-beta.2/`; verify the exact staged files and inspect runtime dependencies.
 - [x] Review beta.2 release notes and README, including supported mouse recording destinations and retained live acceptance limitations.
-- [ ] Integrate reviewed release changes into release-only `main` and tag the release commit `v0.1.0-beta.2`.
-- [ ] Publish the reviewed notes as a GitHub prerelease with the exact executable and checksum assets.
-- [ ] Download the public assets and verify their checksum and expected executable hash.
+- [x] Integrate reviewed release changes into release-only `main` and tag the release commit `v0.1.0-beta.2`.
+- [x] Publish the reviewed notes as a GitHub prerelease with the exact executable and checksum assets.
+- [x] Download the public assets and verify their checksum and expected executable hash.
 
 ### Verification evidence
 
@@ -29,6 +29,13 @@ Completed on 2026-10-29 UTC using Rust/Cargo 1.91.1, Node.js 24.14.1, and GLib 2
 - `ldd` resolved every dependency; `readelf -d` lists only `libgcc_s.so.1`, `libm.so.6`, `libc.so.6`, and `ld-linux-x86-64.so.2`; no Python runtime library dependency.
 
 Candidate files: `target/release-preparation/v0.1.0-beta.2/mcsr-toolkit` and `mcsr-toolkit.sha256`. The ignored `target/` directory contains local artifacts, not committed release assets. Do not rebuild or replace the executable without updating its checksum and these notes.
+
+### Publication verification
+
+- Published the reviewed release notes and exactly two assets: `mcsr-toolkit` (12,417,648 bytes) and `mcsr-toolkit.sha256` (79 bytes).
+- Downloaded both assets through their public URLs without authentication; each is byte-identical to the staged candidate. The downloaded checksum verifies executable SHA256 `4f8b21e648fdc7d7d8fc96bb27d7b5e3e0e290643fae6c66856450760662f00d`.
+- Two complete CI runs passed for release commit `105a32bde56a0694dac894520ae079f81388d2b0`: [run 40823957432](https://github.com/Undecember/mcsr/actions/runs/40823957432) and [run 40824015737](https://github.com/Undecember/mcsr/actions/runs/40824015737).
+- The first main CI attempt hit the API test helper's roughly half-second job-wait deadline in three tests. The same API suite passed locally and in the other CI runs; the failed run was retried. Application source and the published executable were unchanged.
 
 ### Remaining live gates
 
