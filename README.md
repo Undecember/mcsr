@@ -44,7 +44,11 @@ Open <http://127.0.0.1:8765/> after installation. The service binds only to loop
 4. Choose **Apply profile** and keep the returned backup ID. The UI also fills it into the restore field after a successful apply.
 5. To undo the latest toolkit-managed file and keyd changes, enter its backup ID under **Restore a backup**. After applying A and then B, restore B first, then A. Minecraft must be closed; backups belong to their original launcher root. Wait for restore to succeed and confirm keyd health and ordinary typing before considering live activation.
 
-Apply and Restore are serialized jobs. Keep the service running and do not edit the same instance files concurrently. Restore rejects stale or already restored backups, changed options or managed state, changed launcher instances, missing history, and inconsistent keyd snapshots. Profiles, backups, and Python-era recovery records are retained on uninstall.
+Apply also synchronizes enabled control entries in existing local Standard Settings configs: `config/mcsr/standardsettings.json` (modern) and `config/standardoptions.txt` (legacy), relative to the instance's game directory. This prevents the mod from resetting toolkit controls when a new world is created. Disabled or blank entries, unrelated settings, and global toggles are preserved. Missing configs stay absent; Standard Settings generates its initial config from the updated Minecraft options. Mod-only changes participate in Preview and wait for Minecraft to close before activation.
+
+Shared configs are not modified. A `config/mcsr/standardsettings.global` reference or a legacy path redirect blocks Apply with a per-instance error because the mod would ignore local edits. To use toolkit-managed settings for such an instance, first configure it to use an independent local config. Unsafe paths and malformed configs also block Apply before any instance is changed.
+
+Apply and Restore are serialized jobs. Keep the service running and do not edit the same instance files concurrently. New backups include local Standard Settings configs and Restore returns their exact original bytes. Restore rejects stale or already restored backups, changed options or mod configs (including added or removed config files), changed managed state or launcher instances, missing history, and inconsistent keyd snapshots. Older options-only backups remain restorable and do not change mod configs. Profiles, backups, and Python-era recovery records are retained on uninstall.
 
 ## Resize presets
 

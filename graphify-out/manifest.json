@@ -1,488 +1,512 @@
 {
   ".codex/hooks.json": {
-    "mtime": 1793268762.8637066,
-    "seen": 1793269153.7188716,
+    "mtime": 1793271953.0762885,
+    "seen": 1793272508.8747225,
     "ast_hash": "005ac71c84af2cae38e255e2b9de2411",
     "semantic_hash": ""
   },
   ".github/workflows/rust.yml": {
-    "mtime": 1793268762.8677065,
-    "seen": 1793269153.7188883,
+    "mtime": 1793271953.0782883,
+    "seen": 1793272508.8747306,
     "ast_hash": "9b3b47f7efaf131b1254f221a3f5cd92",
     "semantic_hash": ""
   },
   "Cargo.toml": {
-    "mtime": 1793268762.8687065,
-    "seen": 1793269153.7188966,
+    "mtime": 1793271953.0782883,
+    "seen": 1793272508.874735,
     "ast_hash": "7b9567d73e257155583c2607a80f6ad0",
     "semantic_hash": ""
   },
   "build.rs": {
-    "mtime": 1793268762.8707063,
-    "seen": 1793269153.7189019,
+    "mtime": 1793271953.0792885,
+    "seen": 1793272508.8747392,
     "ast_hash": "8d7178a765bb46278033b377fcf38e8d",
     "semantic_hash": ""
   },
   "extension/extension.js": {
-    "mtime": 1793271041.0513127,
-    "seen": 1793271183.7226982,
+    "mtime": 1793271953.0812883,
+    "seen": 1793272508.8747432,
     "ast_hash": "1f1394087920f64f206471eb839e1af8",
     "semantic_hash": ""
   },
   "extension/metadata.json": {
-    "mtime": 1793268762.8777063,
-    "seen": 1793269153.7189105,
+    "mtime": 1793271953.0812883,
+    "seen": 1793272508.874747,
     "ast_hash": "8c8f2d7897ffd16a968d99f752d6dfa4",
     "semantic_hash": ""
   },
   "integration/gnome-probe/extension.js": {
-    "mtime": 1793268762.8897064,
-    "seen": 1793269153.718914,
+    "mtime": 1793271953.0892885,
+    "seen": 1793272508.8747506,
     "ast_hash": "505e8a43f8c34eba621b4687f2825444",
     "semantic_hash": ""
   },
   "integration/gnome-probe/metadata.json": {
-    "mtime": 1793268762.8897064,
-    "seen": 1793269153.7189176,
+    "mtime": 1793271953.0892885,
+    "seen": 1793272508.8747542,
     "ast_hash": "d4da4b730405b4f93160a0e6d322fcae",
     "semantic_hash": ""
   },
   "integration/keyd-focus-probe.sh": {
-    "mtime": 1793268762.8897064,
-    "seen": 1793269153.7189212,
+    "mtime": 1793271953.0902884,
+    "seen": 1793272508.8747582,
     "ast_hash": "4e10bdba650882a0f11100f4c7af2d88",
     "semantic_hash": ""
   },
   "integration/live-ui-acceptance.mjs": {
-    "mtime": 1793268762.8907063,
-    "seen": 1793269153.7189245,
+    "mtime": 1793271953.0902884,
+    "seen": 1793272508.8747618,
     "ast_hash": "58d2712b6632074cb039f3d7c8ef36fd",
     "semantic_hash": ""
   },
   "src/api.rs": {
-    "mtime": 1793268762.8927064,
-    "seen": 1793269153.7189276,
+    "mtime": 1793271953.0902884,
+    "seen": 1793272508.8747654,
     "ast_hash": "f46163656d7cee6b66c3d985637dcbd5",
     "semantic_hash": ""
   },
   "src/apply.rs": {
-    "mtime": 1793268762.8927064,
-    "seen": 1793269153.7189312,
-    "ast_hash": "8dca44f16764eb112a80cbdf7fcc3aae",
+    "mtime": 1793272632.7393854,
+    "seen": 1793272645.6019847,
+    "ast_hash": "097015d2e17f2d863543a4c908fb83d6",
     "semantic_hash": ""
   },
   "src/assets.rs": {
-    "mtime": 1793268762.8937063,
-    "seen": 1793269153.7189343,
+    "mtime": 1793271953.0902884,
+    "seen": 1793272508.8747728,
     "ast_hash": "8ceba868ad7d5b3e0311bd65fa97b4dc",
     "semantic_hash": ""
   },
   "src/downloads.rs": {
-    "mtime": 1793268762.8937063,
-    "seen": 1793269153.7189379,
+    "mtime": 1793271953.0912883,
+    "seen": 1793272508.8747766,
     "ast_hash": "1200b3c2b91aa8f32ab642f6a7ac081d",
     "semantic_hash": ""
   },
   "src/focus.rs": {
-    "mtime": 1793268762.8937063,
-    "seen": 1793269153.7189415,
+    "mtime": 1793271953.0912883,
+    "seen": 1793272508.8747804,
     "ast_hash": "1c30390b9819612ecf640691184f1d94",
     "semantic_hash": ""
   },
   "src/gnome.rs": {
-    "mtime": 1793268762.8937063,
-    "seen": 1793269153.7189448,
+    "mtime": 1793271953.0912883,
+    "seen": 1793272508.874784,
     "ast_hash": "7a6528e9d7b96c515f6ccd548962ab75",
     "semantic_hash": ""
   },
   "src/install.rs": {
-    "mtime": 1793268762.8947062,
-    "seen": 1793269153.718948,
+    "mtime": 1793271953.0912883,
+    "seen": 1793272508.8747876,
     "ast_hash": "6444a8dfeac067433e1933945581e117",
     "semantic_hash": ""
   },
   "src/instances.rs": {
-    "mtime": 1793268762.8957064,
-    "seen": 1793269153.7189512,
+    "mtime": 1793271953.0912883,
+    "seen": 1793272508.8747911,
     "ast_hash": "8a59094fa14e77dbb41cfa9da82d3c80",
     "semantic_hash": ""
   },
   "src/keyd.rs": {
-    "mtime": 1793268762.8957064,
-    "seen": 1793269153.7189548,
+    "mtime": 1793271953.0922885,
+    "seen": 1793272508.874795,
     "ast_hash": "39b7f130200830fa3aa5ceaa03a167db",
     "semantic_hash": ""
   },
   "src/keyd_helper.rs": {
-    "mtime": 1793268762.8957064,
-    "seen": 1793269153.7189581,
+    "mtime": 1793271953.0922885,
+    "seen": 1793272508.8747985,
     "ast_hash": "7e19fea029733e0096c5b6ae4f3be12a",
     "semantic_hash": ""
   },
   "src/lib.rs": {
-    "mtime": 1793268762.8967063,
-    "seen": 1793269153.7189615,
-    "ast_hash": "03048126471307ebc84b1c8d63beddd3",
+    "mtime": 1793272223.507238,
+    "seen": 1793272508.874802,
+    "ast_hash": "46ec08216e9c4f5e15b379a5443a0d1c",
     "semantic_hash": ""
   },
   "src/maccel.rs": {
-    "mtime": 1793268762.8967063,
-    "seen": 1793269153.718965,
+    "mtime": 1793271953.0922885,
+    "seen": 1793272508.874806,
     "ast_hash": "8337496f676b5f3633ecfb7f7b58bdae",
     "semantic_hash": ""
   },
   "src/maccel_helper.rs": {
-    "mtime": 1793268762.8967063,
-    "seen": 1793269153.7189686,
+    "mtime": 1793271953.0922885,
+    "seen": 1793272508.8748095,
     "ast_hash": "4e6d7180b03d8a51b97277f036965956",
     "semantic_hash": ""
   },
   "src/main.rs": {
-    "mtime": 1793268762.8967063,
-    "seen": 1793269153.718972,
+    "mtime": 1793271953.0922885,
+    "seen": 1793272508.8748136,
     "ast_hash": "a1ef8013564bf73b447402debcd492e3",
     "semantic_hash": ""
   },
   "src/mapping.rs": {
-    "mtime": 1793268762.8977063,
-    "seen": 1793269153.7189755,
+    "mtime": 1793271953.0922885,
+    "seen": 1793272508.8748176,
     "ast_hash": "0a5b281628aeb6edb6c0e1fa07a06c0d",
     "semantic_hash": ""
   },
   "src/options.rs": {
-    "mtime": 1793268762.8977063,
-    "seen": 1793269153.7189794,
+    "mtime": 1793271953.0922885,
+    "seen": 1793272508.8748212,
     "ast_hash": "1dc0222a2b24bbb7372dd9a8f5ba4fa6",
     "semantic_hash": ""
   },
   "src/paths.rs": {
-    "mtime": 1793268762.8977063,
-    "seen": 1793269153.7189834,
+    "mtime": 1793271953.0922885,
+    "seen": 1793272508.874825,
     "ast_hash": "563a9c9a2551426f81b87f287372ef19",
     "semantic_hash": ""
   },
   "src/profile.rs": {
-    "mtime": 1793268762.8977063,
-    "seen": 1793269153.718987,
+    "mtime": 1793271953.0932884,
+    "seen": 1793272508.8748286,
     "ast_hash": "573e61efcbd70567e3dd878c26b24560",
     "semantic_hash": ""
   },
   "src/runtime.rs": {
-    "mtime": 1793268762.8987062,
-    "seen": 1793269153.718991,
+    "mtime": 1793271953.0932884,
+    "seen": 1793272508.8748324,
     "ast_hash": "15be63711acc0997e996865e143c86ae",
     "semantic_hash": ""
   },
   "src/setup_helper.rs": {
-    "mtime": 1793268762.8987062,
-    "seen": 1793269153.7189944,
+    "mtime": 1793271953.0932884,
+    "seen": 1793272508.874836,
     "ast_hash": "a3b073c51311c12a130f0f52a315d297",
     "semantic_hash": ""
   },
   "static/app.js": {
-    "mtime": 1793268762.8997064,
-    "seen": 1793269153.718998,
+    "mtime": 1793271953.0932884,
+    "seen": 1793272508.8748436,
     "ast_hash": "299eecdf206d498bae6b3aee87acbdb9",
     "semantic_hash": ""
   },
   "static/app.test.cjs": {
-    "mtime": 1793268762.8997064,
-    "seen": 1793269153.719001,
+    "mtime": 1793271953.0932884,
+    "seen": 1793272508.8748474,
     "ast_hash": "2fbf73839a442df4d568e82fb4aa9dd7",
     "semantic_hash": ""
   },
   "tests/extension_harness.cjs": {
-    "mtime": 1793271045.3973174,
-    "seen": 1793271183.7227433,
+    "mtime": 1793271953.0942883,
+    "seen": 1793272508.874851,
     "ast_hash": "d32555f777e0254218c32248f7d264fb",
     "semantic_hash": ""
   },
   "tests/fixtures/profile-default.json": {
-    "mtime": 1793268762.9007063,
-    "seen": 1793269153.7190082,
+    "mtime": 1793271953.0942883,
+    "seen": 1793272508.8748548,
     "ast_hash": "fd40f60327421221f7d4aae64b8ec439",
     "semantic_hash": ""
   },
   "tests/key_capture_browser.cjs": {
-    "mtime": 1793268762.9007063,
-    "seen": 1793269153.7190113,
+    "mtime": 1793271953.0942883,
+    "seen": 1793272508.8748584,
     "ast_hash": "da2e861042abfff840b3aed453555c7c",
     "semantic_hash": ""
   },
   "tests/rust_api.rs": {
-    "mtime": 1793268762.9007063,
-    "seen": 1793269153.7190151,
+    "mtime": 1793271953.0942883,
+    "seen": 1793272508.8748624,
     "ast_hash": "2adefbee939e0e6c6e487302e368d529",
     "semantic_hash": ""
   },
   "tests/rust_apply.rs": {
-    "mtime": 1793268762.9017062,
-    "seen": 1793269153.7190187,
-    "ast_hash": "e498c1883a02b72a9e2245962bdfa04d",
+    "mtime": 1793272623.6023793,
+    "seen": 1793272645.602025,
+    "ast_hash": "c30f87d71c4d394110b9cfe6b21681e5",
     "semantic_hash": ""
   },
   "tests/rust_assets.rs": {
-    "mtime": 1793268762.9017062,
-    "seen": 1793269153.719022,
+    "mtime": 1793271953.0942883,
+    "seen": 1793272508.8748696,
     "ast_hash": "f3089945cdc8515fe774762fbd4bd74e",
     "semantic_hash": ""
   },
   "tests/rust_downloads.rs": {
-    "mtime": 1793268762.9017062,
-    "seen": 1793269153.7190259,
+    "mtime": 1793271953.0942883,
+    "seen": 1793272508.8748734,
     "ast_hash": "915dc55ac987066f1390526fea3bcd00",
     "semantic_hash": ""
   },
   "tests/rust_focus.rs": {
-    "mtime": 1793268762.9027064,
-    "seen": 1793269153.7190318,
+    "mtime": 1793271953.0942883,
+    "seen": 1793272508.8748772,
     "ast_hash": "d8e335a54a8909d1aba35cea529a03eb",
     "semantic_hash": ""
   },
   "tests/rust_gnome.rs": {
-    "mtime": 1793268762.9027064,
-    "seen": 1793269153.7190366,
+    "mtime": 1793271953.0952885,
+    "seen": 1793272508.874881,
     "ast_hash": "20688d2cfbc9f1ea8c7ab7e269e082f6",
     "semantic_hash": ""
   },
   "tests/rust_install.rs": {
-    "mtime": 1793268762.9037063,
-    "seen": 1793269153.7190402,
+    "mtime": 1793271953.0952885,
+    "seen": 1793272508.874885,
     "ast_hash": "69615783878e19ee6f3b459f77250551",
     "semantic_hash": ""
   },
   "tests/rust_instances.rs": {
-    "mtime": 1793268762.9037063,
-    "seen": 1793269153.7190442,
+    "mtime": 1793271953.0952885,
+    "seen": 1793272508.8748887,
     "ast_hash": "7bdedcd7140f16eee7e237ad5b8d71dc",
     "semantic_hash": ""
   },
   "tests/rust_keyd.rs": {
-    "mtime": 1793268762.9037063,
-    "seen": 1793269153.719048,
+    "mtime": 1793271953.0952885,
+    "seen": 1793272508.8748925,
     "ast_hash": "6fbc1687d37d0ee5f65dfd96b8d9709a",
     "semantic_hash": ""
   },
   "tests/rust_keyd_helper.rs": {
-    "mtime": 1793268762.9037063,
-    "seen": 1793269153.719053,
+    "mtime": 1793271953.0952885,
+    "seen": 1793272508.8748963,
     "ast_hash": "91fe1c452730415ed13515c0586fc8fa",
     "semantic_hash": ""
   },
   "tests/rust_maccel_helper.rs": {
-    "mtime": 1793268762.9047062,
-    "seen": 1793269153.7190566,
+    "mtime": 1793271953.0952885,
+    "seen": 1793272508.8749003,
     "ast_hash": "d4511e54ea820920e1ace2e012b70de6",
     "semantic_hash": ""
   },
   "tests/rust_privileged_dispatch.rs": {
-    "mtime": 1793268762.9047062,
-    "seen": 1793269153.7190604,
+    "mtime": 1793271953.0952885,
+    "seen": 1793272508.8749042,
     "ast_hash": "94d2debafa87d777297c4362e08eb55d",
     "semantic_hash": ""
   },
   "tests/rust_profile.rs": {
-    "mtime": 1793268762.9057064,
-    "seen": 1793269153.7190654,
+    "mtime": 1793271953.0962884,
+    "seen": 1793272508.8749077,
     "ast_hash": "a5ed0556a99c2e58f1f5fbf1a440e8b3",
     "semantic_hash": ""
   },
   "tests/rust_runtime.rs": {
-    "mtime": 1793268762.9057064,
-    "seen": 1793269153.719069,
+    "mtime": 1793271953.0962884,
+    "seen": 1793272508.8749115,
     "ast_hash": "eea6b10cf76227e80ababd712c8c86ef",
     "semantic_hash": ""
   },
   "tests/rust_runtime_process.rs": {
-    "mtime": 1793268762.9057064,
-    "seen": 1793269153.7190726,
+    "mtime": 1793271953.0962884,
+    "seen": 1793272508.8749154,
     "ast_hash": "220197613a94bf6aff56db02bf04219c",
     "semantic_hash": ""
   },
   "tests/rust_sensitivity.rs": {
-    "mtime": 1793269123.6510332,
-    "seen": 1793269153.7190826,
+    "mtime": 1793271953.0962884,
+    "seen": 1793272508.874919,
     "ast_hash": "4ff44dacc91b0990ab0a7cbc01b3ea58",
     "semantic_hash": ""
   },
   "tests/rust_setup_protocol.rs": {
-    "mtime": 1793268762.9067063,
-    "seen": 1793269153.719087,
+    "mtime": 1793271953.0962884,
+    "seen": 1793272508.8749228,
     "ast_hash": "0debe6135a0a05e78d65abf71b2b1f13",
     "semantic_hash": ""
   },
   "tests/ui_harness.cjs": {
-    "mtime": 1793268762.9067063,
-    "seen": 1793269153.7190905,
+    "mtime": 1793271953.0962884,
+    "seen": 1793272508.87493,
     "ast_hash": "44b99c4c1f6f5b231ab0fa7cbad15fc9",
     "semantic_hash": ""
   },
   "AGENTS.md": {
-    "mtime": 1793268762.8687065,
-    "seen": 1793269153.7190943,
+    "mtime": 1793271953.0782883,
+    "seen": 1793272508.8749335,
     "ast_hash": "f36539ecc9af68f33ebd72770ce4a19e",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793271135.8292592,
-    "seen": 1793271183.722777,
-    "ast_hash": "3d8c336144ef76be020c724244f00d4f",
+    "mtime": 1793272379.231268,
+    "seen": 1793272508.8749373,
+    "ast_hash": "7be731102a3e011c4d567c9f094aa717",
     "semantic_hash": ""
   },
   "docs/rust-release-checklist.md": {
-    "mtime": 1793268762.8717065,
-    "seen": 1793269153.7191012,
+    "mtime": 1793271953.0792885,
+    "seen": 1793272508.8749409,
     "ast_hash": "0c49840c43013fd419b9cc306f37c690",
     "semantic_hash": ""
   },
   "docs/rust-release-notes.md": {
-    "mtime": 1793268762.8717065,
-    "seen": 1793269153.7191048,
+    "mtime": 1793271953.0792885,
+    "seen": 1793272508.8749447,
     "ast_hash": "c5a619cb38f8c8752af6083cca34c9b0",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-03-mcsr-toolkit.md": {
-    "mtime": 1793268762.8717065,
-    "seen": 1793269153.7191093,
+    "mtime": 1793271953.0792885,
+    "seen": 1793272508.8749483,
     "ast_hash": "aa6d01f353e0aaf5f43ddf66882d4148",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-04-keyd-restart-recovery.md": {
-    "mtime": 1793268762.8727064,
-    "seen": 1793269153.719113,
+    "mtime": 1793271953.0792885,
+    "seen": 1793272508.8749518,
     "ast_hash": "4e0a27cd93a3784b48d1449e4e9f468f",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-22-maccel-sensitivity-recovery.md": {
-    "mtime": 1793268762.8727064,
-    "seen": 1793269153.7191172,
+    "mtime": 1793271953.0792885,
+    "seen": 1793272508.874956,
     "ast_hash": "9be59569d8c085141e84e36c75313874",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-22-rust-single-binary.md": {
-    "mtime": 1793268762.8737063,
-    "seen": 1793269153.719121,
+    "mtime": 1793271953.0802884,
+    "seen": 1793272508.8749597,
     "ast_hash": "0e9bfb54624eef0b7a4250c1821d8212",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-26-chat-enter-dual-role.md": {
-    "mtime": 1793268762.8737063,
-    "seen": 1793269153.7191243,
+    "mtime": 1793271953.0802884,
+    "seen": 1793272508.8749635,
     "ast_hash": "2022e9946f00323ccb5e538cd50b9068",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-26-rust-source-cutover.md": {
-    "mtime": 1793268762.8737063,
-    "seen": 1793269153.7191281,
+    "mtime": 1793271953.0802884,
+    "seen": 1793272508.874967,
     "ast_hash": "ceaed51a7f22601cac871f3debe00c91",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-29-beta2-release.md": {
-    "mtime": 1793268762.8747065,
-    "seen": 1793269153.7191315,
+    "mtime": 1793271953.0802884,
+    "seen": 1793272508.874971,
     "ast_hash": "92f40c82601f4370e241d4989e2217ef",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-29-key-capture.md": {
-    "mtime": 1793268762.8747065,
-    "seen": 1793269153.7191396,
+    "mtime": 1793271953.0802884,
+    "seen": 1793272508.874978,
     "ast_hash": "bcc5b68acce5add239c65f881948fea3",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-29-minecraft-control-picker.md": {
-    "mtime": 1793268762.8747065,
-    "seen": 1793269153.7191434,
+    "mtime": 1793271953.0802884,
+    "seen": 1793272508.8749819,
     "ast_hash": "612e4b7e1634f80f7d923999147ab341",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-29-uninstall-keyd.md": {
-    "mtime": 1793268762.8757064,
-    "seen": 1793269153.719147,
+    "mtime": 1793271953.0802884,
+    "seen": 1793272508.8749893,
     "ast_hash": "7ac515eb12cc3e8db502f091f234ffe4",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-10-03-mcsr-toolkit-design.md": {
-    "mtime": 1793268762.8757064,
-    "seen": 1793269153.7191505,
+    "mtime": 1793271953.0802884,
+    "seen": 1793272508.8749928,
     "ast_hash": "6c28369f63f310ec297f1dfd6cf950b8",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-10-06-maccel-sensitivity-recovery-design.md": {
-    "mtime": 1793268762.8757064,
-    "seen": 1793269153.7191546,
+    "mtime": 1793271953.0812883,
+    "seen": 1793272508.8749967,
     "ast_hash": "c06d3c6c20c57e7bcf3e76729b7d7ca2",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-10-22-rust-single-binary-design.md": {
-    "mtime": 1793268762.8767064,
-    "seen": 1793269153.7191584,
+    "mtime": 1793271953.0812883,
+    "seen": 1793272508.8750005,
     "ast_hash": "71c2f5f01caec3f725a7f65b4bdaab8b",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-10-26-chat-enter-dual-role-design.md": {
-    "mtime": 1793268762.8767064,
-    "seen": 1793269153.7191625,
+    "mtime": 1793271953.0812883,
+    "seen": 1793272508.875004,
     "ast_hash": "00d210180e962cc672fe0f535c550f4d",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-10-26-rust-source-cutover-design.md": {
-    "mtime": 1793268762.8777063,
-    "seen": 1793269153.7191658,
+    "mtime": 1793271953.0812883,
+    "seen": 1793272508.875008,
     "ast_hash": "eef7ba9d51d7665b2090def25a03e5a2",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-10-29-key-capture-design.md": {
-    "mtime": 1793268762.8777063,
-    "seen": 1793269153.7191741,
+    "mtime": 1793271953.0812883,
+    "seen": 1793272508.8750157,
     "ast_hash": "d0a1cb01cb192b95a8163330e79fbe95",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-10-29-minecraft-control-picker-design.md": {
-    "mtime": 1793268762.8777063,
-    "seen": 1793269153.7191777,
+    "mtime": 1793271953.0812883,
+    "seen": 1793272508.8750196,
     "ast_hash": "e101d640a057d1c5d904176e7f3a626e",
     "semantic_hash": ""
   },
   "integration/acceptance-wayland.md": {
-    "mtime": 1793268762.8887064,
-    "seen": 1793269153.7191815,
+    "mtime": 1793271953.0892885,
+    "seen": 1793272508.875027,
     "ast_hash": "03f3425a8280ca59bd11890f02a21bbd",
     "semantic_hash": ""
   },
   "integration/keyd-focus-probe.md": {
-    "mtime": 1793268762.8897064,
-    "seen": 1793269153.7191849,
+    "mtime": 1793271953.0892885,
+    "seen": 1793272508.8750305,
     "ast_hash": "8367569af21bd1400fb4b6092581330c",
     "semantic_hash": ""
   },
   "integration/resize-wayland.md": {
-    "mtime": 1793271135.830259,
-    "seen": 1793271183.7228136,
-    "ast_hash": "55693fffe482d7de9d6a64c943ee86da",
+    "mtime": 1793271953.0902884,
+    "seen": 1793272508.8750343,
+    "ast_hash": "f8568db372f9a31ffd437c276e76d2ed",
     "semantic_hash": ""
   },
   "static/index.html": {
-    "mtime": 1793268762.8997064,
-    "seen": 1793269153.719193,
+    "mtime": 1793271953.0932884,
+    "seen": 1793272508.8750381,
     "ast_hash": "e657513cf76e057bd3eb9258b654cf52",
     "semantic_hash": ""
   },
   "tests/fixtures/options-1.16.txt": {
-    "mtime": 1793268762.9007063,
-    "seen": 1793269153.719197,
+    "mtime": 1793271953.0942883,
+    "seen": 1793272508.8750417,
     "ast_hash": "95d914236d300d94c9dc54062f37baf5",
     "semantic_hash": ""
   },
   "docs/superpowers/plans/2026-10-29-borderless-resize.md": {
-    "mtime": 1793271135.830259,
-    "seen": 1793271183.7227917,
-    "ast_hash": "7553f54fc34fa7c3e6d814e0cd7ffb4f",
+    "mtime": 1793271953.0802884,
+    "seen": 1793272508.8749745,
+    "ast_hash": "5f7cf3bd0b8b97c2559046ee596512bd",
     "semantic_hash": ""
   },
   "docs/superpowers/specs/2026-10-29-borderless-resize-design.md": {
-    "mtime": 1793271135.830259,
-    "seen": 1793271183.722806,
+    "mtime": 1793271953.0812883,
+    "seen": 1793272508.875012,
     "ast_hash": "6f57072a60afd5b6b92309bbe783c92e",
+    "semantic_hash": ""
+  },
+  "src/standard_settings.rs": {
+    "mtime": 1793272223.504238,
+    "seen": 1793272508.8748398,
+    "ast_hash": "f468a14aa124459e6a89bdded1f381bf",
+    "semantic_hash": ""
+  },
+  "tests/rust_standard_settings.rs": {
+    "mtime": 1793272223.509238,
+    "seen": 1793272508.874926,
+    "ast_hash": "243873dd67565931c948bf6e32ccf52c",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-10-29-standard-settings.md": {
+    "mtime": 1793272468.3702967,
+    "seen": 1793272508.8749855,
+    "ast_hash": "ac3abb9b33c0ac59d4e0e14f3476ab17",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-10-29-standard-settings-design.md": {
+    "mtime": 1793271968.577286,
+    "seen": 1793272508.8750231,
+    "ast_hash": "94388c3777ce96dde1aab13942ef30d6",
     "semantic_hash": ""
   }
 }

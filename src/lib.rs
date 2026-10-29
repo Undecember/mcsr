@@ -16,3 +16,4 @@ pub mod paths;
 pub mod profile;
 pub mod runtime;
 pub mod setup_helper;
+pub mod standard_settings;
