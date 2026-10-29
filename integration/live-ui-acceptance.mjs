@@ -70,13 +70,13 @@ if (process.argv[2] === 'self-test') {
   await fs.writeFile(lockFile, 'locked');
   const fakeChrome = spawn(process.execPath, ['-e', `
     const fs = require('node:fs');
-    process.stdout.write('ready\\n');
     process.on('SIGTERM', () => setTimeout(() => {
       try { fs.writeFileSync(${JSON.stringify(lockFile)}, 'closed'); }
       catch { process.exitCode = 1; }
       setTimeout(() => process.exit(), 50);
     }, 50));
     setInterval(() => {}, 1000);
+    process.stdout.write('ready\\n');
   `], { stdio: ['ignore', 'pipe', 'ignore'] });
   try {
     await new Promise(resolve => fakeChrome.stdout.once('data', resolve));

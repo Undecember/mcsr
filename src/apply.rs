@@ -780,7 +780,7 @@ impl ApplyCoordinator {
             let target = self.root.join(&file.relative);
             if instance.problem.is_some()
                 || target != instance.options_path
-                || self.running(&instance)
+                || self.running(instance)
             {
                 return Err(err("unsafe or running restore target"));
             }

@@ -1,5 +1,59 @@
 # Rust single-binary release checklist
 
+## v0.1.0 stable candidate — 2026-10-29
+
+Status: **Stable v0.1.0 is built, verified, and independently reviewed. Release-ready approval received for local squash integration and annotated tagging; public publication is pending.** The operator explicitly selected a non-beta release. Candidate tag: `v0.1.0`; Cargo package version: `0.1.0`. Release branch: `release/v0.1.0`, forked from `dev` at `a62271da0439a1a87eca881f4927ac98af5e2006`. No remote stable tag or matching release branch existed at preparation time. Historical beta records below are retained unchanged.
+
+### Scope and source identity
+
+The candidate includes Standard Settings local config synchronization and transactional backup/Restore, and windowed borderless centered resize presets, on top of beta.3. Release preparation makes a Clippy-only redundant-borrow correction in `src/apply.rs` and moves the fixture fake browser's readiness signal after its shutdown-handler registration. The latter follows one observed self-test failure; ten baseline retries passed, consistent with the readiness race visible in source. Fixed-fixture verification is recorded below. No service, helper, live Minecraft options, keyd, or sensitivity settings are changed during preparation.
+
+The development base is not claimed to be the exact unmodified binary source. A sorted SHA256 manifest of all `src/`, `static/`, `extension/`, and `packaging/` files plus `build.rs`, `Cargo.toml`, and `Cargo.lock` records the actual build inputs. Release documents and Graphify output are not embedded by `build.rs`. Preserve the executable and checksum; rebuild only if source inputs change, and update identity before approval.
+
+### Preparation checklist
+
+- [x] Select `v0.1.0` as a stable release, using the established `v` tag prefix and the existing Cargo version.
+- [x] Create the release worktree from reviewed `dev`; preserve unrelated primary changes.
+- [x] Update current README and release notes to stable terminology, while retaining all documented live-test limits and historical beta publication records.
+- [x] Pass formatting, Clippy, all Rust tests, UI tests, extension/UI harnesses, fixture self-test, and strict schema validation.
+- [x] Pass the browser input-recording smoke test with isolated API responses.
+- [x] Build the optimized executable, pass release embedded-asset tests, and stage exactly two public assets in the primary checkout's `target/release-preparation/v0.1.0/`.
+- [x] Verify checksum, executable identity, source-input manifest, ELF dependencies, and GLIBC requirement.
+- [x] Obtain independent review of preparation changes, stable metadata, artifact identity, and disclosed limitations: **PASS**, no material findings. The reviewer independently verified both assets, all 34 build-input hashes and the fingerprint, optimized-build identity, package version, ELF/GLIBC requirements, document links/anchors, and unchanged beta history.
+- [x] Obtain explicit release-ready approval before squash-merging `release/v0.1.0` into release-only `main` and tagging that release commit `v0.1.0`. The operator approved local integration and tagging on 2026-10-29. Verify the resulting commit and tag refs directly; push/publication and development synchronization require separate approval.
+- [ ] Obtain push/publication authorization; publish as a stable GitHub release with `prerelease: false`, using the exact staged assets.
+- [ ] Verify release-commit CI and public downloads against the staged executable and checksum.
+- [ ] Obtain approval for `main` → `dev` synchronization with `git merge --no-ff`; verify before release worktree/branch cleanup.
+
+### Candidate verification
+
+Completed in `.worktrees/release-v0.1.0/` using its own Cargo target directory, on Ubuntu 26.04.1 LTS / Linux 7.0.0-38-generic, Rust/Cargo 1.98.1 (`x86_64-unknown-linux-gnu`), Node.js 24.21.0, and GLib 2.88.0:
+
+- `cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings`: passed after the redundant-borrow correction. The initial Clippy run correctly rejected that expression; no lint was suppressed.
+- `cargo test --locked --no-fail-fast -- --test-threads=1`: 348 passed, zero failures across 22 reported suites. The normal unit invocation ran all tests; a nested invocation filtered 47. Serial execution follows the previous release's recorded timing limitations; no new parallel-suite success is claimed.
+- `node --test static/app.test.cjs`: 14 passed. `node tests/extension_harness.cjs`, `node tests/ui_harness.cjs`, and `glib-compile-schemas --strict --dry-run extension/schemas`: passed.
+- `node integration/live-ui-acceptance.mjs self-test`: passed ten consecutive runs after the readiness-order correction. The first run before the correction failed its Chrome-exit assertion; ten pre-fix retries also passed, demonstrating that the observed failure was intermittent rather than a consistently failing product operation.
+- `playwright-cli -s=stable-release run-code --filename=tests/key_capture_browser.cjs`: passed in headless Chrome with a temporary static server and isolated API responses. Keyboard, all five mouse buttons, click-through, timeout, shortcuts, profile save, and mobile layout passed. Browser and server were closed afterward.
+- `cargo build --release --locked` and `cargo test --release --locked --test rust_assets`: passed, including all five embedded-asset tests.
+- `sha256sum --check mcsr-toolkit.sha256` in `target/release-preparation/v0.1.0/`: `mcsr-toolkit: OK`. That directory contains exactly the executable and its checksum.
+- `ldd` resolves every dependency. `readelf -d` lists `libgcc_s.so.1`, `libm.so.6`, `libc.so.6`, `ld-linux-x86-64.so.2`; no Python runtime library is linked. Highest required GLIBC symbol version: `2.39`. The runtime target remains Ubuntu GNOME Shell 50 on x86_64 Wayland; local dependency checks do not establish compatibility with other Ubuntu versions or supervised desktop acceptance.
+- `git diff --check` passed and `graphify update .` refreshed the code graph.
+
+| Identity | Value |
+| --- | --- |
+| Development base | `a62271da0439a1a87eca881f4927ac98af5e2006` |
+| Actual build-input fingerprint (SHA256 of sorted manifest) | `63cae1f76980cfaa85106141440ec9920c8459990c563fea8bb2705d16a03bbd` |
+| Input manifest | `target/release-preparation/v0.1.0-source-inputs.sha256` (34 files) |
+| Executable SHA256 | `2c55101368ca33fcd0b7099e06cef51caf49b985cbf4ab71e3f8afcf84a71c73` |
+| Executable bytes | `12,817,512` |
+| Checksum file bytes | `79` |
+
+The exact staged artifacts match the release worktree's optimized build. The recorded source fingerprint includes the release-only lint adjustment. The operator has approved a local release commit and annotated tag. No remote push or publication has been performed. Future GitHub publication must use `prerelease: false`; verify the exact public downloads and release-commit CI before claiming publication verification.
+
+### Remaining live limitations
+
+The user-selected stable designation does not convert deferred tests into passing evidence. Active-remap logout/login, lock/unlock and crash/restart, successful guided uninstall/rollback and prompt counts, installed-binary new-instance Restore, and the latest picker/input recorder and Standard Settings device checks remain unvalidated. The corrected resize lifecycle, shortcut-through-service route, and native Wayland behavior retain the limits recorded in `integration/resize-wayland.md`. Current code rejects fullscreen transitions and requires the client to leave fullscreen itself. These limits are disclosed in the current release notes.
+
 ## v0.1.0-beta.3 candidate — 2026-10-29
 
 Status: **[`v0.1.0-beta.3` published as a GitHub prerelease](https://github.com/Undecember/mcsr/releases/tag/v0.1.0-beta.3)** at `2026-10-29T08:41:42Z`. The release-only `main` commit is `28f0d15c76afcde8fe9d3cccc0d387a6576e6483`, with the matching annotated release tag. Preparation is on `release/v0.1.0-beta.3`, forked from reviewed `dev` commit `e3090238f9317927dfab175bef3cce1c896f6be8`. At release-ready approval, the published release remains beta.2. Cargo package version remains `0.1.0`, following the existing beta tag/hash convention. No stable-release acceptance is claimed.
