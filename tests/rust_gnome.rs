@@ -243,3 +243,50 @@ async fn bridge_stale_check_leaves_expiry_transition_for_runtime_watch() {
     cancel_tx.send(true).unwrap();
     task.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn captured_special_keys_become_gnome_accelerators() {
+    let peer = Arc::new(FakePeer::default());
+    let bridge = GnomeBridge::new(peer.clone(), Arc::new(StdMutex::new(FocusState::default())));
+    for (key, symbol) in [
+        ("capslock", "Caps_Lock"),
+        ("numlock", "Num_Lock"),
+        ("scrolllock", "Scroll_Lock"),
+        ("sysrq", "Print"),
+        ("pause", "Pause"),
+        ("menu", "Menu"),
+        ("kp0", "KP_0"),
+        ("kp1", "KP_1"),
+        ("kp2", "KP_2"),
+        ("kp3", "KP_3"),
+        ("kp4", "KP_4"),
+        ("kp5", "KP_5"),
+        ("kp6", "KP_6"),
+        ("kp7", "KP_7"),
+        ("kp8", "KP_8"),
+        ("kp9", "KP_9"),
+        ("kpplus", "KP_Add"),
+        ("kpminus", "KP_Subtract"),
+        ("kpasterisk", "KP_Multiply"),
+        ("kpslash", "KP_Divide"),
+        ("kpdot", "KP_Decimal"),
+        ("kpenter", "KP_Enter"),
+        ("kpequal", "KP_Equal"),
+    ] {
+        let mut profile = Profile::default();
+        profile.presets.push(ResizePreset {
+            id: "normal".into(),
+            width: 800,
+            height: 600,
+            shortcut: format!("rightcontrol+{key}"),
+            eye_zoom: false,
+        });
+        bridge.configure_presets(&profile).await.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&peer.config.lock().await).unwrap();
+        assert_eq!(
+            value[0]["accelerator"],
+            format!("<Control>{symbol}"),
+            "{key}"
+        );
+    }
+}

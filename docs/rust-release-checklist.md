@@ -1,5 +1,43 @@
 # Rust single-binary release checklist
 
+## v0.1.0-beta.2 candidate — 2026-10-29
+
+Status: **local `v0.1.0-beta.2` candidate prepared and verified**. No tag, main merge, push, or public release has been created by this preparation. Target support remains Ubuntu GNOME Shell 50 on x86_64 Wayland; the automated build host is Ubuntu 24.04.5 LTS and does not establish live GNOME acceptance.
+
+- [x] Version selected: `v0.1.0-beta.2`; retain Cargo package `0.1.0`, following beta.1's tag/hash convention.
+- [x] Identify application source base: `8b81d6f7a681492e2dcb88eaf625abc84f4119ce` with its existing `Cargo.lock`. Local configuration and generated graph changes are excluded from binary inputs.
+- [x] Run formatting, Clippy, Rust tests, extension/UI harnesses, live-UI fixture self-test, and strict schema validation.
+- [x] Run existing browser key capture smoke test with isolated API responses; no live device operations.
+- [x] Build release executable and run release embedded-asset tests.
+- [x] Stage the executable and matching checksum under `target/release-preparation/v0.1.0-beta.2/`; verify the exact staged files and inspect runtime dependencies.
+- [x] Review beta.2 release notes and README, including supported mouse recording destinations and retained live acceptance limitations.
+- [ ] Integrate reviewed release changes into release-only `main` and tag the release commit `v0.1.0-beta.2`.
+- [ ] Publish the reviewed notes as a GitHub prerelease with the exact executable and checksum assets.
+- [ ] Download the public assets and verify their checksum and expected executable hash.
+
+### Verification evidence
+
+Completed on 2026-10-29 UTC using Rust/Cargo 1.91.1, Node.js 24.14.1, and GLib 2.80.0:
+
+- `cargo fmt --check` and `cargo clippy --all-targets --locked -- -D warnings`: passed.
+- `cargo test --locked`: 317 passed, 41 filtered out across 21 suites; no failures.
+- `node tests/extension_harness.cjs`, `node tests/ui_harness.cjs`, and `node integration/live-ui-acceptance.mjs self-test`: passed.
+- `glib-compile-schemas --strict --dry-run extension/schemas`: passed.
+- `cargo build --release --locked` and `cargo test --release --locked --test rust_assets`: passed; all 5 asset tests passed.
+- `playwright-cli -s=beta2-release run-code --filename=tests/key_capture_browser.cjs` against an isolated static server with mocked API responses: passed in headless Chrome. Covered keyboard capture, all five supported mouse buttons, click-through suppression, timeout, shortcuts, profile save, and mobile layout.
+- `sha256sum --check mcsr-toolkit.sha256` in the staged candidate directory: `mcsr-toolkit: OK`. Executable SHA256: `4f8b21e648fdc7d7d8fc96bb27d7b5e3e0e290643fae6c66856450760662f00d`.
+- `ldd` resolved every dependency; `readelf -d` lists only `libgcc_s.so.1`, `libm.so.6`, `libc.so.6`, and `ld-linux-x86-64.so.2`; no Python runtime library dependency.
+
+Candidate files: `target/release-preparation/v0.1.0-beta.2/mcsr-toolkit` and `mcsr-toolkit.sha256`. The ignored `target/` directory contains local artifacts, not committed release assets. Do not rebuild or replace the executable without updating its checksum and these notes.
+
+### Remaining live gates
+
+The existing supervised results below are historical beta.1 evidence. Beta.2's control picker, recording behavior, and expanded bindings have not been tested on the supervised Minecraft/GNOME device. Live logout/login while remapped, lock/unlock and crash/restart during active keyd remapping, guided uninstall rollback/prompt counts, and a separate installed-binary new-instance Restore cycle remain deferred. Automated tests and browser mocks do not close those gates. Stable-release acceptance is not claimed.
+
+## Historical v0.1.0-beta.1 preparation record
+
+The following record retains the original binary identity and acceptance evidence. Its unchecked publication items describe the historical preparation state, not the beta.2 candidate.
+
 Status: **preparing the user-authorized `v0.1.0-beta.1` GitHub prerelease**. Supervised Rust evidence and failures are recorded in [the Wayland record](../integration/acceptance-wayland.md). The operator deferred live keyd logout/login, lock/unlock, crash/restart, and guided uninstall rollback/prompt-count tests to beta users and feedback; these are disclosed limitations, not stable-release sign-off criteria for this beta. Exact release asset verification still needs to be completed before publication. The target is Ubuntu GNOME Shell 50 on x86_64 Wayland.
 
 ## Source cutover

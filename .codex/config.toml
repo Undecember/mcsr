@@ -1,0 +1,3 @@
+[mcp_servers.graphify]
+command = "/home/undec/.local/bin/graphify-mcp"
+args = ["/home/undec/mcsr/graphify-out/graph.json"]
