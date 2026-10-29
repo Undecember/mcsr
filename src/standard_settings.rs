@@ -120,6 +120,7 @@ impl<'de> Deserialize<'de> for Unique {
 fn json_edit(
     bytes: &[u8],
     bindings: &IndexMap<String, String>,
+    windowed: bool,
 ) -> Result<Vec<u8>, StandardSettingsError> {
     let Unique(mut value) = serde_json::from_slice(bytes)
         .map_err(|e| fail(format!("invalid Standard Settings JSON: {e}")))?;
@@ -157,6 +158,33 @@ fn json_edit(
             }
         }
     }
+    if windowed {
+        if let Some(entry) = object.get_mut("fullscreen") {
+            let target = match entry {
+                Value::Bool(value) => Some(value),
+                Value::Object(obj) => match obj.get("enabled").and_then(Value::as_bool) {
+                    Some(false) => None,
+                    Some(true) => Some(
+                        obj.get_mut("value")
+                            .and_then(|v| {
+                                if let Value::Bool(b) = v {
+                                    Some(b)
+                                } else {
+                                    None
+                                }
+                            })
+                            .ok_or_else(|| fail("invalid active fullscreen boolean"))?,
+                    ),
+                    None => return Err(fail("invalid fullscreen enabled flag")),
+                },
+                _ => return Err(fail("invalid active fullscreen boolean")),
+            };
+            if let Some(value) = target {
+                changed |= *value;
+                *value = false;
+            }
+        }
+    }
     if changed {
         serde_json::to_vec_pretty(&value).map_err(|e| fail(e.to_string()))
     } else {
@@ -167,6 +195,7 @@ fn json_edit(
 fn legacy_edit(
     bytes: &[u8],
     bindings: &IndexMap<String, String>,
+    windowed: bool,
 ) -> Result<Vec<u8>, StandardSettingsError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|e| fail(format!("invalid Standard Settings text: {e}")))?;
@@ -199,6 +228,23 @@ fn legacy_edit(
             }
         }
         let line = &text[start..end];
+        if windowed && (line == "fullscreen" || line.starts_with("fullscreen:")) {
+            if !seen.insert("fullscreen") {
+                return Err(fail("duplicate fullscreen entry"));
+            }
+            let old = line
+                .strip_prefix("fullscreen:")
+                .ok_or_else(|| fail("invalid fullscreen entry"))?;
+            if !old.trim().is_empty() {
+                if !matches!(old, "true" | "false") {
+                    return Err(fail("invalid active fullscreen boolean"));
+                }
+                output.push_str("fullscreen:false");
+                output.push_str(&text[end..next]);
+                start = next;
+                continue;
+            }
+        }
         if let Some((key, old)) = line.split_once(':') {
             if key.starts_with("key_") {
                 if !seen.insert(key) {
@@ -226,6 +272,14 @@ pub fn prepare_local(
     game_dir: &Path,
     bindings: &IndexMap<String, String>,
 ) -> Result<Vec<ConfigEdit>, StandardSettingsError> {
+    prepare_local_with_windowed(game_dir, bindings, false)
+}
+
+pub fn prepare_local_with_windowed(
+    game_dir: &Path,
+    bindings: &IndexMap<String, String>,
+    windowed: bool,
+) -> Result<Vec<ConfigEdit>, StandardSettingsError> {
     if local_file(game_dir, &["config", "mcsr", "standardsettings.global"])?.is_some() {
         return Err(fail(
             "shared Standard Settings .global redirect is unsupported; use a local config",
@@ -240,9 +294,9 @@ pub fn prepare_local(
             let before = fs::read(&path)
                 .map_err(|e| fail(format!("cannot read {}: {e}", path.display())))?;
             let after = if modern {
-                json_edit(&before, bindings)?
+                json_edit(&before, bindings, windowed)?
             } else {
-                legacy_edit(&before, bindings)?
+                legacy_edit(&before, bindings, windowed)?
             };
             edits.push(ConfigEdit {
                 path,

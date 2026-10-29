@@ -100,6 +100,7 @@ impl MaccelPeer for FakeHelper {
 struct FakeGnome {
     actual: AsyncMutex<Option<(u32, u32)>>,
     fail: AsyncMutex<bool>,
+    toggle: AsyncMutex<Option<(u32, u32, bool)>>,
 }
 impl GnomePeer for FakeGnome {
     async fn get_focus(&self) -> Result<(String, String, u32, u32, bool), GnomeError> {
@@ -113,6 +114,16 @@ impl GnomePeer for FakeGnome {
             return Err(GnomeError("resize failed".into()));
         }
         Ok(self.actual.lock().await.unwrap_or((width, height)))
+    }
+    async fn toggle_resize_focused(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Result<(u32, u32, bool), GnomeError> {
+        if *self.fail.lock().await {
+            return Err(GnomeError("resize failed".into()));
+        }
+        Ok(self.toggle.lock().await.unwrap_or((width, height, false)))
     }
 }
 
@@ -516,4 +527,83 @@ async fn cancelled_newer_restore_does_not_make_older_token_usable() {
     assert!(first.await.unwrap().is_err());
     assert!(sensitivity.needs_restore());
     assert!(sensitivity.eye().await.is_err());
+}
+
+#[tokio::test]
+async fn normal_preset_requires_toggle_support_instead_of_fixed_size_fallback() {
+    struct OldPeer;
+    impl GnomePeer for OldPeer {
+        async fn get_focus(&self) -> Result<(String, String, u32, u32, bool), GnomeError> {
+            Ok(("Minecraft".into(), "Game".into(), 800, 600, false))
+        }
+        async fn configure_presets(&self, _: String) -> Result<(), GnomeError> {
+            Ok(())
+        }
+        async fn resize_focused(&self, w: u32, h: u32) -> Result<(u32, u32), GnomeError> {
+            Ok((w, h))
+        }
+    }
+    let helper = FakeHelper::ready(3_221_225_472).await;
+    let sensitivity = Arc::new(SensitivityController::new(helper));
+    sensitivity.startup_restore().await.unwrap();
+    let focus = focused();
+    let controller = PresetController::new(
+        Arc::new(GnomeBridge::new(Arc::new(OldPeer), focus.clone())),
+        sensitivity,
+        focus.clone(),
+    );
+    let snapshot = focus.lock().unwrap().clone();
+    assert!(controller
+        .apply(&profile(), "normal", false, &snapshot)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn normal_toggle_restores_baseline_for_full_and_preset_while_eye_stays_fixed() {
+    let helper = FakeHelper::ready(3_221_225_472).await;
+    let sensitivity = Arc::new(SensitivityController::new(helper.clone()));
+    sensitivity.startup_restore().await.unwrap();
+    let gnome = Arc::new(FakeGnome::default());
+    let focus = focused();
+    let controller = PresetController::new(
+        Arc::new(GnomeBridge::new(gnome.clone(), focus.clone())),
+        sensitivity,
+        focus.clone(),
+    );
+    let snapshot = focus.lock().unwrap().clone();
+    let eye = controller
+        .apply(&profile(), "eye", false, &snapshot)
+        .await
+        .unwrap();
+    assert!(!eye.full_size);
+    *gnome.toggle.lock().await = Some((1920, 1080, true));
+    let full = controller
+        .apply(&profile(), "normal", false, &snapshot)
+        .await
+        .unwrap();
+    assert_eq!(
+        (full.width, full.height, full.full_size),
+        (1920, 1080, true)
+    );
+    assert_eq!(helper.state.lock().await.raw, 3_221_225_472);
+    controller
+        .apply(&profile(), "eye", false, &snapshot)
+        .await
+        .unwrap();
+    *gnome.toggle.lock().await = Some((800, 600, false));
+    let preset = controller
+        .apply(&profile(), "normal", false, &snapshot)
+        .await
+        .unwrap();
+    assert!(!preset.full_size);
+    assert_eq!(helper.state.lock().await.raw, 3_221_225_472);
+    *gnome.toggle.lock().await = Some((1, 1, true));
+    assert!(
+        !controller
+            .apply(&profile(), "eye", true, &snapshot)
+            .await
+            .unwrap()
+            .full_size
+    );
 }

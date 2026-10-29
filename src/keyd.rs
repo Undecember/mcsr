@@ -116,12 +116,22 @@ impl CommandRunner for SystemCommandRunner {
 }
 
 pub(crate) fn verify_managed_daemon(binary: &str) -> Result<(), String> {
-    let response = run_command(
-        &[binary.into(), "mcsr-daemon-capabilities".into()],
-        &[],
-        Duration::from_secs(3),
-    )
-    .map_err(|e| format!("managed keyd capability probe failed: {e}"))?;
+    verify_managed_daemon_bounded(binary, Duration::from_secs(3))
+}
+
+pub(crate) fn verify_managed_daemon_bounded(binary: &str, budget: Duration) -> Result<(), String> {
+    verify_managed_daemon_with(binary, budget, &mut |args, timeout| {
+        run_command(args, &[], timeout)
+    })
+}
+
+pub(crate) fn verify_managed_daemon_with(
+    binary: &str,
+    budget: Duration,
+    run: &mut impl FnMut(&[String], Duration) -> Result<CommandOutput, CommandFailure>,
+) -> Result<(), String> {
+    let response = run(&[binary.into(), "mcsr-daemon-capabilities".into()], budget)
+        .map_err(|e| format!("managed keyd capability probe failed: {e}"))?;
     verify_managed_capabilities(&response.stdout)
 }
 fn verify_managed_capabilities(response: &str) -> Result<(), String> {

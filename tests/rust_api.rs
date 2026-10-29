@@ -964,3 +964,64 @@ fn completed_backup_id(fixture: &Fixture) -> String {
     let record: Value = serde_json::from_slice(&fs::read(state).unwrap()).unwrap();
     record["head"].as_str().unwrap().to_owned()
 }
+
+#[tokio::test]
+async fn native_windowed_preview_exposes_instance_details_without_keyboard_mapping() {
+    struct NoKeyd;
+    impl mcsr_toolkit::apply::KeydAdapter for NoKeyd {
+        fn install(&self, _: &Profile) -> Result<(), String> {
+            unreachable!()
+        }
+        fn checkpoint(&self) -> Result<Vec<String>, String> {
+            Ok(vec![])
+        }
+        fn restore_to(&self, _: &[String]) -> Result<(), String> {
+            unreachable!()
+        }
+        fn rollback(&self) -> Result<(), String> {
+            unreachable!()
+        }
+    }
+    let mut fixture = Fixture::new(false, None);
+    fs::write(&fixture.options, b"fullscreen:true\n").unwrap();
+    fixture.state = Arc::new(
+        ApiState::new(
+            ApiConfig {
+                profile_path: fixture.temp.path().join("profile.json"),
+                managed_dir: fixture.temp.path().to_owned(),
+                state_dir: fixture.temp.path().join("state"),
+                port: 8765,
+                keys: KeySet::fallback(),
+            },
+            Arc::new(mcsr_toolkit::api::NativeBackend {
+                data_home: fixture.temp.path().join("data"),
+                keyd: Arc::new(NoKeyd),
+            }),
+            Arc::new(Runtime { live: false }),
+            Arc::new(FakeDownload),
+        )
+        .unwrap(),
+    );
+    let (status, result) = fixture
+        .write(
+            Method::POST,
+            "/api/preview",
+            json!({
+                "launcher_root": fixture.temp.path().join("launcher"),
+                "presets":[{"id":"thin","width":300,"height":900,"shortcut":"b"}]
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["instances"][0]["status"], "ready");
+    assert!(result["instances"][0]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("windowed"));
+    assert!(result["mappings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|m| m["action"] != "fullscreen"));
+    assert_eq!(fs::read(&fixture.options).unwrap(), b"fullscreen:true\n");
+}

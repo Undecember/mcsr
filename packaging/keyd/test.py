@@ -43,7 +43,13 @@ def main():
         reset = stage / "reset-test"
         run(compiler, '-DDATA_DIR=""', "-iquote", stage / "src", TESTS / "reset.c", *sources, "-o", reset)
         run(reset, TESTS / "keyd.conf")
-        print(f"PASS: {len(upstream)} upstream event cases, {len(cases)} toolkit event cases, held-key reset cleanup")
+        ipc = stage / "ipc-reset-test"
+        run(compiler, '-DDATA_DIR=""', '-DCONFIG_DIR=""', '-DSOCKET_PATH=""',
+            '-DVERSION="test"', "-ffunction-sections", "-fdata-sections",
+            "-iquote", stage / "src", TESTS / "ipc-reset.c", *sources,
+            stage / "src/util.c", "-Wl,--gc-sections", "-o", ipc)
+        run(ipc, TESTS / "keyd.conf")
+        print(f"PASS: {len(upstream)} upstream event cases, {len(cases)} toolkit event cases, held-key reset cleanup, IPC bind reset")
 
 
 if __name__ == "__main__":

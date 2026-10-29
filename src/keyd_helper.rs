@@ -197,6 +197,7 @@ impl HelperFilesystem {
 pub trait HelperSystem {
     fn list_keys(&mut self) -> Result<String, String>;
     fn systemctl(&mut self, action: &'static str) -> Result<bool, String>;
+    fn readiness(&mut self, budget: Duration) -> Result<bool, String>;
     fn now(&self) -> Duration;
     fn sleep(&mut self, duration: Duration);
 }
@@ -248,15 +249,17 @@ impl HelperSystem for RealSystem {
             &[],
             Duration::from_secs(5),
         ) {
-            Ok(_) => {
-                if action == "is-active" {
-                    crate::keyd::verify_managed_daemon(crate::managed_keyd::BINARY_PATH)?;
-                }
-                Ok(true)
-            }
+            Ok(_) => Ok(true),
             Err(CommandFailure::Failed(_)) => Ok(false),
             Err(CommandFailure::TimedOut(message)) => Err(message),
         }
+    }
+    fn readiness(&mut self, budget: Duration) -> Result<bool, String> {
+        readiness_with(
+            budget,
+            || self.started.elapsed(),
+            |args, timeout| run_command(args, &[], timeout),
+        )
     }
     fn now(&self) -> Duration {
         self.started.elapsed()
@@ -264,6 +267,40 @@ impl HelperSystem for RealSystem {
     fn sleep(&mut self, duration: Duration) {
         std::thread::sleep(duration);
     }
+}
+
+// Both commands consume one budget: systemd activity alone does not establish IPC readiness.
+fn readiness_with(
+    budget: Duration,
+    now: impl Fn() -> Duration,
+    mut run: impl FnMut(&[String], Duration) -> Result<crate::keyd::CommandOutput, CommandFailure>,
+) -> Result<bool, String> {
+    let deadline = now() + budget;
+    if budget.is_zero() {
+        return Err("keyd readiness timed out".into());
+    }
+    match run(
+        &[
+            "/usr/bin/systemctl".into(),
+            "is-active".into(),
+            "--quiet".into(),
+            "keyd.service".into(),
+        ],
+        budget,
+    ) {
+        Ok(_) => (),
+        Err(CommandFailure::Failed(_)) => return Ok(false),
+        Err(CommandFailure::TimedOut(error)) => return Err(error),
+    }
+    let remaining = deadline.saturating_sub(now());
+    if remaining.is_zero() {
+        return Err("keyd readiness timed out".into());
+    }
+    crate::keyd::verify_managed_daemon_with(crate::managed_keyd::BINARY_PATH, remaining, &mut run)?;
+    if now() > deadline {
+        return Err("keyd readiness timed out".into());
+    }
+    Ok(true)
 }
 
 fn restart_healthy(system: &mut dyn HelperSystem) -> Result<(), String> {
@@ -274,11 +311,29 @@ fn restart_healthy(system: &mut dyn HelperSystem) -> Result<(), String> {
         let deadline = system.now() + Duration::from_secs(5);
         let mut stable_since = None;
         let mut last_healthy = None;
+        let mut last_error = "keyd service or IPC not ready".to_string();
         loop {
-            let healthy = system.systemctl("is-active")?;
+            let before = system.now();
+            if stable_since.is_none() && before >= deadline {
+                return Err(format!("keyd health check timed out: {last_error}"));
+            }
+            let budget = last_healthy.map_or_else(
+                || deadline.saturating_sub(before),
+                |last: Duration| {
+                    Duration::from_millis(200).saturating_sub(before.saturating_sub(last))
+                },
+            );
+            let observation = system.readiness(budget);
             let now = system.now();
+            let healthy = match observation {
+                Ok(healthy) => healthy,
+                Err(error) => {
+                    last_error = error;
+                    false
+                }
+            };
             if stable_since.is_none() && now > deadline {
-                return Err("keyd health check timed out".into());
+                return Err(format!("keyd health check timed out: {last_error}"));
             }
             if healthy {
                 if let Some(since) = stable_since {
@@ -295,10 +350,12 @@ fn restart_healthy(system: &mut dyn HelperSystem) -> Result<(), String> {
                 }
                 last_healthy = Some(now);
             } else if stable_since.is_some() {
-                return Err("keyd health check failed during stability window".into());
+                return Err(format!(
+                    "keyd health check failed during stability window: {last_error}"
+                ));
             }
             if stable_since.is_none() && now >= deadline {
-                return Err("keyd health check timed out".into());
+                return Err(format!("keyd health check timed out: {last_error}"));
             }
             let end = stable_since.map_or(deadline, |since| since + Duration::from_millis(500));
             let remaining = end.saturating_sub(now);
@@ -686,6 +743,80 @@ pub fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn production_readiness_requires_active_service_and_complete_ipc_capabilities() {
+        for (active, response, ready) in [
+            (false, Ok("mcsr-layerk-v1 mcsr-matchmods-v1"), false),
+            (true, Err("connection refused"), false),
+            (true, Ok("mcsr-layerk-v1"), false),
+            (true, Ok("mcsr-layerk-v1 mcsr-matchmods-v1"), true),
+        ] {
+            let mut calls = 0;
+            let result = readiness_with(
+                Duration::from_secs(1),
+                || Duration::ZERO,
+                |args, budget| {
+                    calls += 1;
+                    assert_eq!(budget, Duration::from_secs(1));
+                    if args[0] == "/usr/bin/systemctl" {
+                        assert_eq!(
+                            args,
+                            ["/usr/bin/systemctl", "is-active", "--quiet", "keyd.service"]
+                        );
+                        if active {
+                            Ok(crate::keyd::CommandOutput {
+                                stdout: String::new(),
+                            })
+                        } else {
+                            Err(CommandFailure::Failed("inactive".into()))
+                        }
+                    } else {
+                        assert_eq!(
+                            args,
+                            [crate::managed_keyd::BINARY_PATH, "mcsr-daemon-capabilities"]
+                        );
+                        response
+                            .map(|stdout| crate::keyd::CommandOutput {
+                                stdout: stdout.into(),
+                            })
+                            .map_err(|error| CommandFailure::Failed(error.into()))
+                    }
+                },
+            );
+            assert_eq!(result == Ok(true), ready, "{result:?}");
+            assert_eq!(calls, if active { 2 } else { 1 });
+            if active && !ready {
+                assert!(result.is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn production_readiness_shares_command_budget_and_rejects_overrun() {
+        let clock = std::cell::Cell::new(Duration::ZERO);
+        let mut budgets = Vec::new();
+        let result = readiness_with(
+            Duration::from_millis(150),
+            || clock.get(),
+            |args, budget| {
+                budgets.push(budget);
+                clock.set(clock.get() + Duration::from_millis(100));
+                Ok(crate::keyd::CommandOutput {
+                    stdout: if args[0] == "/usr/bin/systemctl" {
+                        String::new()
+                    } else {
+                        "mcsr-layerk-v1 mcsr-matchmods-v1".into()
+                    },
+                })
+            },
+        );
+        assert!(result.unwrap_err().contains("timed out"));
+        assert_eq!(
+            budgets,
+            [Duration::from_millis(150), Duration::from_millis(50)]
+        );
+    }
 
     #[test]
     fn helper_selects_only_the_managed_client_and_never_falls_back() {

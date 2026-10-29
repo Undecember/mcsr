@@ -39,7 +39,7 @@ const profile = target => ({controls: {}, crafting: {s: target}, ninjabrain: {},
   presets: [], launcher_root: '/launcher'});
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-async function browser({deferProfile = false, initialProfile} = {}) {
+async function browser({deferProfile = false, initialProfile, initialFocus = {}} = {}) {
   const ids = new Map();
   const chats = new Map();
   const get = id => {
@@ -72,7 +72,7 @@ async function browser({deferProfile = false, initialProfile} = {}) {
     let body;
     if (path === '/api/session') body = {token: 'session'};
     else if (path === '/api/status') body = {live_activation_enabled: true,
-      launcher_root: '/launcher', instances: [{id: 'one'}], focus: {mode: 'live'}};
+      launcher_root: '/launcher', instances: [{id: 'one'}], focus: {mode: 'live', ...initialFocus}};
     else if (path === '/api/profile' && options.method === 'PUT') {
       canonical = data; body = canonical;
     } else if (path === '/api/profile') {
@@ -105,7 +105,16 @@ async function browser({deferProfile = false, initialProfile} = {}) {
 }
 
 (async () => {
+  const fullSize = await browser({initialFocus: {window_mode: 'full_size', active_preset: null}});
+  assert.match(fullSize.get('status').textContent, /Full-size borderless/,
+    'a verified full-size result must be shown as a borderless window');
+  const presetSize = await browser({initialFocus: {window_mode: 'preset', active_preset: 'thin'}});
+  assert.match(presetSize.get('status').textContent, /Preset: thin/,
+    'a preset-sized window must identify its active preset');
+
   const clean = await browser();
+  assert.doesNotMatch(clean.get('status').textContent, /Full-size borderless|Preset: /,
+    'missing resize state must not invent a window mode');
   await clean.get('restore-backup').emit('click');
   assert.equal(clean.craftingTarget().value, 'k', 'restore must show the canonical prior profile');
   await clean.get('preview-profile').emit('click');

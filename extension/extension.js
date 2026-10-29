@@ -21,6 +21,13 @@ const XML = `<node>
       <arg name="applied_width" type="u" direction="out"/>
       <arg name="applied_height" type="u" direction="out"/>
     </method>
+    <method name="ToggleResizeFocused">
+      <arg name="width" type="u" direction="in"/>
+      <arg name="height" type="u" direction="in"/>
+      <arg name="applied_width" type="u" direction="out"/>
+      <arg name="applied_height" type="u" direction="out"/>
+      <arg name="full_size" type="b" direction="out"/>
+    </method>
     <method name="PrepareRouting">
       <arg name="generation" type="s" direction="in"/>
     </method>
@@ -60,6 +67,7 @@ export default class McsrToolkitExtension extends Extension {
         this._presets = [];
         this._routingGeneration = '';
         this._resizeRequests = new Map();
+        this._initPanelVisibility();
         try {
             this._settings = this.getSettings();
             // Shortcuts stay inactive until the service supplies its current profile.
@@ -69,6 +77,7 @@ export default class McsrToolkitExtension extends Extension {
     }
 
     disable() {
+        this._disablePanelVisibility();
         if (this._routingFenceTimeout)
             GLib.source_remove(this._routingFenceTimeout);
         this._routingFenceTimeout = null;
@@ -94,6 +103,8 @@ export default class McsrToolkitExtension extends Extension {
     }
 
     PrepareRouting(generation) {
+        this._clearManagedPanelWindows();
+        this._resizeConfigurationSerial = (this._resizeConfigurationSerial ?? 0) + 1;
         if (this._routingFenceTimeout) {
             GLib.source_remove(this._routingFenceTimeout);
             this._routingFenceTimeout = null;
@@ -132,6 +143,7 @@ export default class McsrToolkitExtension extends Extension {
     }
 
     ConfigurePresets(configuration) {
+        this._resizeConfigurationSerial = (this._resizeConfigurationSerial ?? 0) + 1;
         if (!this._settings)
             throw new Error('shortcut settings unavailable');
         if (configuration.length > 8192)
@@ -164,6 +176,7 @@ export default class McsrToolkitExtension extends Extension {
             throw new Error('routing input drain pending');
         if (this._pendingRouting && envelope.drain !== true)
             throw new Error('routing input drain pending');
+        this._clearManagedPanelWindows();
         const previousPresets = this._presets;
         const previousGeneration = this._pendingRouting?.previousGeneration ?? this._routingGeneration;
         this._pendingRouting = null;
@@ -374,7 +387,164 @@ export default class McsrToolkitExtension extends Extension {
         return (this._bindings?.length ?? 0) === expected;
     }
 
+    _initPanelVisibility() {
+        this._managedPanelWindows = new WeakSet();
+        this._panelSignals = [];
+        this._panelWindowSignals = [];
+        this._panelOwned = false;
+        this._panelBusy = false;
+        const layout = Main.layoutManager;
+        const panel = layout?.panelBox;
+        try {
+            if (!panel || typeof panel.hide !== 'function' ||
+                typeof panel.get_transformed_position !== 'function' ||
+                typeof panel.get_transformed_size !== 'function' ||
+                typeof layout._updateVisibility !== 'function' ||
+                !Main.overview || !Main.sessionMode ||
+                typeof global.stage?.is_grabbed !== 'boolean')
+                throw new Error('stock Shell panel hooks unavailable');
+            this._panelActor = panel;
+            this._panelLayout = layout;
+            this._panelRefreshHook = layout._updateVisibility;
+            this._panelRefresh = layout._updateVisibility.bind(layout);
+            this._panelRefreshActor = typeof layout._updateActorVisibility === 'function'
+                ? layout._updateActorVisibility.bind(layout) : null;
+            const connect = (object, signal, callback) => {
+                const id = object.connect(signal, callback);
+                this._panelSignals.push([object, id]);
+            };
+            connect(panel, 'notify::visible', () => this._syncPanelVisibility());
+            connect(panel, 'notify::allocation', () => this._syncPanelVisibility());
+            connect(layout, 'monitors-changed', () => this._syncPanelVisibility());
+            connect(global.stage, 'notify::key-focus', () => this._syncPanelVisibility());
+            connect(global.stage, 'notify::is-grabbed', () => this._syncPanelVisibility());
+            connect(Main.overview, 'showing', () => this._syncPanelVisibility());
+            connect(Main.overview, 'hidden', () => this._syncPanelVisibility());
+            connect(Main.sessionMode, 'updated', () => this._syncPanelVisibility());
+            this._panelEnabled = true;
+        } catch (error) {
+            this._disablePanelVisibility();
+            log(`MCSR Toolkit panel visibility unavailable: ${error}`);
+        }
+    }
+
+    _disconnectPanelWindow() {
+        for (const [object, id] of this._panelWindowSignals ?? []) {
+            try { object.disconnect(id); } catch (_) {}
+        }
+        this._panelWindowSignals = [];
+        this._panelWindow = null;
+    }
+
+    _clearManagedPanelWindows() {
+        if (!this._managedPanelWindows)
+            return;
+        this._managedPanelWindows = new WeakSet();
+        this._disconnectPanelWindow();
+        this._restorePanelVisibility();
+    }
+
+    _restorePanelVisibility() {
+        if (!this._panelOwned)
+            return;
+        this._panelOwned = false;
+        this._panelBusy = true;
+        try {
+            if (Main.layoutManager === this._panelLayout &&
+                this._panelLayout.panelBox === this._panelActor) {
+                this._panelRefresh();
+            } else {
+                // A replaced actor is restored only if Shell still tracks it;
+                // never apply this intervention to its replacement.
+                const tracked = this._panelLayout?._trackedActors?.find(
+                    data => data.actor === this._panelActor);
+                if (tracked && this._panelRefreshActor)
+                    this._panelRefreshActor(tracked);
+            }
+        } catch (error) {
+            log(`MCSR Toolkit panel visibility restore failed: ${error}`);
+        } finally {
+            this._panelBusy = false;
+        }
+    }
+
+    _disablePanelVisibility() {
+        this._panelEnabled = false;
+        this._managedPanelWindows = null;
+        this._disconnectPanelWindow();
+        this._restorePanelVisibility();
+        for (const [object, id] of this._panelSignals ?? []) {
+            try { object.disconnect(id); } catch (_) {}
+        }
+        this._panelSignals = [];
+        this._panelActor = null;
+        this._panelLayout = null;
+        this._panelRefreshHook = null;
+        this._panelRefresh = null;
+        this._panelRefreshActor = null;
+    }
+
+    _syncPanelVisibility() {
+        if (!this._panelEnabled || this._panelBusy)
+            return;
+        if (Main.layoutManager !== this._panelLayout ||
+            this._panelLayout.panelBox !== this._panelActor ||
+            this._panelLayout._updateVisibility !== this._panelRefreshHook) {
+            this._disablePanelVisibility();
+            log('MCSR Toolkit panel visibility unavailable: stock Shell panel hooks changed');
+            return;
+        }
+        try {
+            const window = global.display.focus_window;
+            const managed = window && this._managedPanelWindows.has(window);
+            if (this._panelWindow !== (managed ? window : null)) {
+                this._disconnectPanelWindow();
+                if (managed) {
+                    this._panelWindow = window;
+                    for (const signal of ['position-changed', 'size-changed', 'notify::decorated',
+                        'notify::fullscreen', 'notify::minimized', 'unmanaged']) {
+                        const id = window.connect(signal, () => {
+                            if (signal === 'unmanaged') {
+                                this._managedPanelWindows?.delete(window);
+                                this._disconnectPanelWindow();
+                            }
+                            this._syncPanelVisibility();
+                        });
+                        this._panelWindowSignals.push([window, id]);
+                    }
+                }
+            }
+            let eligible = managed && !window.decorated && !window.minimized &&
+                !window.is_fullscreen() && !Main.overview.visible && Main.modalCount === 0 &&
+                !global.stage.is_grabbed &&
+                Main.sessionMode.isPrimary && Main.sessionMode.hasWindows &&
+                (Main.sessionMode.currentMode === 'user' || Main.sessionMode.parentMode === 'user') &&
+                !Main.sessionMode.isLocked && !Main.sessionMode.isGreeter &&
+                window.get_monitor() === this._panelLayout.primaryIndex;
+            if (eligible) {
+                const rect = window.get_frame_rect();
+                const [x, y] = this._panelActor.get_transformed_position();
+                const [width, height] = this._panelActor.get_transformed_size();
+                eligible = [rect.x, rect.y, rect.width, rect.height, x, y, width, height]
+                    .every(Number.isFinite) && rect.width > 0 && rect.height > 0 &&
+                    width > 0 && height > 0 && rect.x < x + width && x < rect.x + rect.width &&
+                    rect.y < y + height && y < rect.y + rect.height;
+            }
+            if (!eligible) {
+                this._restorePanelVisibility();
+            } else if (this._panelActor.visible) {
+                this._panelBusy = true;
+                this._panelOwned = true;
+                try { this._panelActor.hide(); } finally { this._panelBusy = false; }
+            }
+        } catch (error) {
+            this._disablePanelVisibility();
+            log(`MCSR Toolkit panel visibility unavailable: ${error}`);
+        }
+    }
+
     _sendFocus() {
+        this._syncPanelVisibility();
         for (const request of this._resizeRequests?.values() ?? [])
             this._resizeAllowed(request);
         this._syncPresetBindings();
@@ -407,8 +577,13 @@ export default class McsrToolkitExtension extends Extension {
         this._resizeRequests.delete(request);
         if (error)
             request.invocation.return_dbus_error(errorName, error);
-        else
-            request.invocation.return_value(new GLib.Variant('(uu)', dimensions));
+        else {
+            if ((this._resizeConfigurationSerial ?? 0) === request.configurationSerial)
+                this._managedPanelWindows?.add(request.window);
+            this._syncPanelVisibility();
+            request.invocation.return_value(new GLib.Variant(request.toggle ? '(uub)' : '(uu)',
+                request.toggle ? [...dimensions, request.fullSize] : dimensions));
+        }
     }
 
     _resizeAllowed(request) {
@@ -421,6 +596,15 @@ export default class McsrToolkitExtension extends Extension {
         if (request.window.is_fullscreen()) {
             this._finishResize(request, 'Leave fullscreen using Minecraft’s own fullscreen control (usually F11), then retry');
             return false;
+        }
+        if (request.toggle) {
+            const monitor = Main.layoutManager.monitors?.[request.monitorIndex];
+            if (request.window.get_monitor() !== request.monitorIndex || !monitor ||
+                ['x', 'y', 'width', 'height'].some(key => monitor[key] !== request.monitor[key]) ||
+                (this._resizeConfigurationSerial ?? 0) !== request.configurationSerial) {
+                this._finishResize(request, 'Minecraft monitor or resize configuration changed during resize');
+                return false;
+            }
         }
         if (GLib.get_monotonic_time() >= request.deadline) {
             let observed = '';
@@ -519,8 +703,8 @@ export default class McsrToolkitExtension extends Extension {
                 return GLib.SOURCE_CONTINUE;
             if (!request.resizeStarted) {
                 if (!this._resizeAllowed(request)) return GLib.SOURCE_REMOVE;
-                const monitorIndex = window.get_monitor();
-                const monitor = Main.layoutManager.monitors?.[monitorIndex];
+                const monitorIndex = request.toggle ? request.monitorIndex : window.get_monitor();
+                const monitor = request.toggle ? request.monitor : Main.layoutManager.monitors?.[monitorIndex];
                 if (!Number.isInteger(monitorIndex) || monitorIndex < 0 || !monitor ||
                     !Number.isInteger(monitor.x) || !Number.isInteger(monitor.y) ||
                     !Number.isInteger(monitor.width) || monitor.width <= 0 ||
@@ -539,7 +723,8 @@ export default class McsrToolkitExtension extends Extension {
             const content = window.get_client_content_rect();
             if (frame.x === request.x && frame.y === request.y &&
                 frame.width === request.width && frame.height === request.height &&
-                content.width === request.width && content.height === request.height) {
+                content.width === request.width && content.height === request.height &&
+                (!request.toggle || (content.x === request.x && content.y === request.y))) {
                 this._finishResize(request, null, [content.width, content.height]);
                 return GLib.SOURCE_REMOVE;
             }
@@ -550,7 +735,15 @@ export default class McsrToolkitExtension extends Extension {
         return GLib.SOURCE_CONTINUE;
     }
 
-    ResizeFocusedAsync([width, height], invocation) {
+    ResizeFocusedAsync(dimensions, invocation) {
+        this._startResize(dimensions, invocation, false);
+    }
+
+    ToggleResizeFocusedAsync(dimensions, invocation) {
+        this._startResize(dimensions, invocation, true);
+    }
+
+    _startResize([width, height], invocation, toggle) {
         const fail = message => invocation.return_dbus_error('org.mcsr.Toolkit.ResizeFailed', message);
         const window = minecraftWindow();
         if (!window) {
@@ -568,7 +761,36 @@ export default class McsrToolkitExtension extends Extension {
         }
         let request;
         try {
+            let monitorIndex, monitor, fullSize = false;
+            if (toggle) {
+                if (window.is_fullscreen()) {
+                    fail('Leave fullscreen using Minecraft’s own fullscreen control (usually F11), then retry');
+                    return;
+                }
+                monitorIndex = window.get_monitor();
+                const current = Main.layoutManager.monitors?.[monitorIndex];
+                if (!Number.isInteger(monitorIndex) || monitorIndex < 0 || !current ||
+                    !Number.isInteger(current.x) || !Number.isInteger(current.y) ||
+                    !Number.isInteger(current.width) || current.width < 100 || current.width > 16384 ||
+                    !Number.isInteger(current.height) || current.height < 100 || current.height > 16384) {
+                    fail('Minecraft monitor geometry is unavailable');
+                    return;
+                }
+                monitor = {x: current.x, y: current.y, width: current.width, height: current.height};
+                const x = monitor.x + Math.floor((monitor.width - width) / 2);
+                const y = monitor.y + Math.floor((monitor.height - height) / 2);
+                const frame = window.get_frame_rect();
+                const content = window.get_client_content_rect();
+                fullSize = !window.decorated && !window.get_maximize_flags() &&
+                    frame.x === x && frame.y === y && frame.width === width && frame.height === height &&
+                    content.x === x && content.y === y && content.width === width && content.height === height;
+                if (fullSize) {
+                    width = monitor.width;
+                    height = monitor.height;
+                }
+            }
             request = {window, invocation, width, height, x: null, y: null,
+                toggle, fullSize, monitorIndex, monitor, configurationSerial: this._resizeConfigurationSerial ?? 0,
                 deadline: GLib.get_monotonic_time() + 2000000, timer: 0, process: null,
                 done: false, prepared: false, statesRequested: false,
                 preparationStarted: false, resizeStarted: false};

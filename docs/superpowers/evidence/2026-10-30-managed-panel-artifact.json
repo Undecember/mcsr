@@ -1,0 +1,10 @@
+{
+  "binary_sha256": "11b73e7aa7715ae4abaae32789dacc227c4ab0fc8801d9c76e74a73dc2b5411f",
+  "embedded_archives": [
+    {
+      "archive": "target/release/build/mcsr-toolkit-2348ea5aaac3f665/out/extension.zip",
+      "archive_sha256": "0e395c1dd0e5993e10b2325cda55847d63e483948b2d5e8952f83e24e601ec9a",
+      "extension_sha256": "6301f6ea24cc62d976ed972f050a3e537e7adef89288bea29674ffbe8278510e"
+    }
+  ]
+}
