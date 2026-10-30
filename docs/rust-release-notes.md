@@ -1,6 +1,10 @@
-# Unreleased installer update
+# MCSR Toolkit v0.3.0
 
-Source builds now request live keyd by default. Installation offers the missing
+Prepared from development commit `ff57988debf6ae3745d132a46cfd6f8a2d9f5a51`.
+Approved for local release integration and tagging on 2026-10-30.
+Publication remains pending.
+
+Installation now requests live keyd by default. Installation offers the missing
 keyd package, socket-group membership, and backed-up F13–F24 mapping; `--yes`
 accepts prerequisite offers and `--observe-only` opts out of live activation.
 Stale desktop service-manager groups produce a reboot-and-repair instruction.
@@ -19,10 +23,21 @@ preventing redundant daemon restarts from exhausting systemd's start limit.
 When the live service is verified healthy, `doctor` no longer describes its
 expected managed keyd configuration as pending recovery.
 
-These changes are not in the published v0.2.0 assets described below. Automated
+These changes are not in the published v0.2.0 assets described below.
+Existing helper hash mismatches, uncertain GNOME handoffs, foreign managed files,
+and malformed recovery records still require review; automatic keyd recovery
+does not bypass those checks. Automated
 regression checks do not establish the full focus/chat acceptance gate for the
 new installer. An on-device repair and live startup check is recorded in the
 [Wayland acceptance record](../integration/acceptance-wayland.md).
+
+Candidate artifact: `mcsr-toolkit`, SHA256 `f8e301e371f2d94f1b9e31f51e2fa54d84810eadb5a7af7eb4912f7a7573660c`.
+Build-input fingerprint: `3105c40333c6e3998cd26a1d7fa422ddd9f841dd75adc0c727959c728c8b0b09` (212 files).
+The executable requires GLIBC 2.39 on the verified x86_64 Linux host.
+See the [candidate checklist](rust-release-checklist.md#v030-candidate--2026-10-30)
+for checks, exact staged assets and approval gates. This version-bumped artifact
+has not been installed on the desktop. The v0.2.0 live limitations below remain
+applicable, including Alt+Tab with Tab-to-F3, F13–F24 translation and native fullscreen.
 
 # MCSR Toolkit v0.2.0
 

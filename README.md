@@ -10,6 +10,8 @@ The supported product is the Rust executable. It includes the local service, bro
 
 [**v0.2.0**](https://github.com/Undecember/mcsr/releases/tag/v0.2.0) is the latest stable release, adding managed keyd/F3 priority, windowed thin/full-size toggles, and conditional stock-panel hiding. Both release CI runs passed and both public downloads match the verified staged assets. Review its [release notes](docs/rust-release-notes.md) and [release checklist](docs/rust-release-checklist.md#v020-candidate--2026-10-30), including the remaining Alt+Tab, temporary F-key translation, and native-fullscreen limitations.
 
+**v0.3.0 is in release preparation**, adding guided live prerequisites and automatic keyd recovery through `repair`. It is not yet published. See the [candidate checklist](docs/rust-release-checklist.md#v030-candidate--2026-10-30).
+
 The stable designation does not replace live-test evidence. Earlier Rust checks passed for installation and repair, focus and remapping, recovery, and the Enter dual-role case. Live logout/login while remapped, lock/unlock and service crash/restart during active keyd remapping, guided uninstall with rollback and authentication prompt counts, and the latest picker and untested resize/lifecycle cases retain the limits disclosed in the [release notes](docs/rust-release-notes.md). Focus updates are asynchronous, so a brief interval can occur before a focus clear takes effect. Earlier Python results in the [Wayland acceptance record](integration/acceptance-wayland.md) are historical evidence and do not validate the Rust installer or service.
 
 ## Verify and install
