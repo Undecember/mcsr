@@ -52,6 +52,7 @@ struct FakeSystem {
     now: Duration,
     calls: Vec<&'static str>,
     fail_restart_at: Option<usize>,
+    fail_reset: bool,
     fail_health: bool,
     fail_stop: bool,
     restart_count: usize,
@@ -74,6 +75,7 @@ impl HelperSystem for FakeSystem {
     fn systemctl(&mut self, action: &'static str) -> Result<bool, String> {
         self.calls.push(action);
         match action {
+            "reset-failed" => Ok(!self.fail_reset),
             "restart" => {
                 self.restart_count += 1;
                 Ok(self.fail_restart_at != Some(self.restart_count))
@@ -298,6 +300,110 @@ fn clear_reports_unsafe_when_config_is_untrusted_and_stop_fails() {
     let error = dispatch(&["privileged", "keyd", "clear"], b"", &s.fs, &mut sys).unwrap_err();
     assert!(error.contains("unsafe"), "{error}");
     assert_eq!(sys.calls, ["stop"]);
+}
+
+#[test]
+fn recover_resets_start_limit_and_verifies_health_without_changing_configs() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem::default();
+    let id = install(&s, &mut sys, FRAGMENT);
+    let before = fs::read(s.config("mcsr-toolkit")).unwrap();
+    sys.calls.clear();
+    dispatch(&["privileged", "keyd", "recover"], b"", &s.fs, &mut sys).unwrap();
+    assert_eq!(&sys.calls[..2], ["reset-failed", "restart"]);
+    assert!(sys.calls.contains(&"is-active"));
+    assert_eq!(fs::read(s.config("mcsr-toolkit")).unwrap(), before);
+    assert!(s.backup(&id).join("manifest.json").is_file());
+}
+
+#[test]
+fn recover_keeps_start_limit_when_configs_are_unsafe() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem::default();
+    fs::write(s.config("other.conf"), b"untrusted").unwrap();
+    let error = dispatch(&["privileged", "keyd", "recover"], b"", &s.fs, &mut sys).unwrap_err();
+    assert!(error.contains("unsafe keyd config"), "{error}");
+    assert_eq!(sys.calls, ["stop"]);
+}
+
+#[test]
+fn recover_propagates_reset_restart_and_health_failures() {
+    for failure in ["reset", "restart", "health"] {
+        let s = Sandbox::new();
+        let mut sys = FakeSystem {
+            fail_reset: failure == "reset",
+            fail_restart_at: (failure == "restart").then_some(1),
+            fail_health: failure == "health",
+            ..Default::default()
+        };
+        assert!(
+            dispatch(&["privileged", "keyd", "recover"], b"", &s.fs, &mut sys).is_err(),
+            "{failure}"
+        );
+        if failure == "reset" {
+            assert_eq!(sys.calls, ["reset-failed"]);
+        } else {
+            assert_eq!(sys.calls.last(), Some(&"stop"));
+        }
+    }
+}
+
+#[test]
+fn recover_refuses_busy_helper_without_resetting_start_limit() {
+    use std::os::fd::AsRawFd;
+    let s = Sandbox::new();
+    let mut sys = FakeSystem::default();
+    dispatch(&["privileged", "keyd", "status"], b"", &s.fs, &mut sys).unwrap();
+    let lock = fs::File::open(s.dir.path().join("run/mcsr-toolkit-keyd.lock")).unwrap();
+    assert_eq!(
+        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    let error = dispatch(&["privileged", "keyd", "recover"], b"", &s.fs, &mut sys).unwrap_err();
+    assert!(error.contains("busy"), "{error}");
+    assert!(sys.calls.is_empty());
+}
+
+#[test]
+fn recovery_fences_requests_created_before_recovery() {
+    let s = Sandbox::new();
+    let mut sys = FakeSystem::default();
+    let delayed = s.fs.fence_input(FRAGMENT.as_bytes()).unwrap();
+    dispatch(&["privileged", "keyd", "recover"], b"", &s.fs, &mut sys).unwrap();
+    sys.calls.clear();
+    let error = dispatch(
+        &["privileged", "keyd", "install"],
+        &delayed,
+        &s.fs,
+        &mut sys,
+    )
+    .unwrap_err();
+    assert!(error.contains("superseded by recovery"), "{error}");
+    assert!(!s.config("mcsr-toolkit.conf").exists());
+    assert!(sys.calls.is_empty());
+    let fresh = s.fs.fence_input(FRAGMENT.as_bytes()).unwrap();
+    dispatch(&["privileged", "keyd", "install"], &fresh, &s.fs, &mut sys).unwrap();
+    assert_eq!(
+        fs::read(s.config("mcsr-toolkit")).unwrap(),
+        FRAGMENT.as_bytes()
+    );
+    let delayed_empty = s.fs.fence_input(b"").unwrap();
+    dispatch(&["privileged", "keyd", "recover"], b"", &s.fs, &mut sys).unwrap();
+    sys.calls.clear();
+    for args in [
+        vec!["privileged", "keyd", "clear"],
+        vec!["privileged", "keyd", "recover"],
+        vec![
+            "privileged",
+            "keyd",
+            "restore",
+            "00000000000000000000000000000000",
+        ],
+    ] {
+        let error = dispatch(&args, &delayed_empty, &s.fs, &mut sys).unwrap_err();
+        assert!(error.contains("superseded by recovery"), "{error}");
+    }
+    assert!(sys.calls.is_empty());
 }
 
 #[derive(Default)]

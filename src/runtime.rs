@@ -101,11 +101,11 @@ fn process_cwds_under(proc_root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-struct ServiceLock {
+pub(crate) struct ServiceLock {
     _file: File,
 }
 impl ServiceLock {
-    fn acquire(path: &Path) -> Result<Self, RuntimeError> {
+    pub(crate) fn acquire(path: &Path) -> Result<Self, RuntimeError> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -344,7 +344,12 @@ impl ServiceRuntime<SessionPeer, InstalledMaccelPeer> {
                 if *cancel.borrow() { return Ok(()); }
                 let initial: Result<Profile, RuntimeError> = Ok(state.active_profile.lock().unwrap().clone().unwrap_or_default());
                 if let Ok(mut configured_profile) = initial {
-                    if let Err(error) = configure_routes(&state, &bridge, &configured_profile).await {
+                    let initial_configuration = if state.configured_profile.lock().unwrap().as_ref() == Some(&configured_profile) {
+                        Ok(())
+                    } else {
+                        configure_routes(&state, &bridge, &configured_profile).await
+                    };
+                    if let Err(error) = initial_configuration {
                         state.record_error(error);
                     } else {
                     let (sender, mut receiver) = mpsc::channel(16);
@@ -910,7 +915,7 @@ async fn configure_routes<P: GnomePeer>(
     {
         let _mutation = state.mutation.lock().unwrap();
         *state.configured_profile.lock().unwrap() = None;
-        if state.live {
+        if state.live && !state.keyd.input_safety_verified() {
             state.keyd.clear().map_err(err)?;
         }
     }
