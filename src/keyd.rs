@@ -151,6 +151,26 @@ pub(crate) fn run_command(
     deadline: Duration,
 ) -> Result<CommandOutput, CommandFailure> {
     let (program, rest) = args.split_first().ok_or("empty command")?;
+    // Capture the root recovery generation before a sudo/polkit child can be
+    // delayed or orphaned. The helper compares it again under its operation lock.
+    let fenced = if args.windows(4).any(|parts| {
+        parts[0] == HELPER
+            && parts[1] == "privileged"
+            && parts[2] == "keyd"
+            && matches!(
+                parts[3].as_str(),
+                "install" | "restore" | "clear" | "recover"
+            )
+    }) {
+        Some(
+            crate::keyd_helper::HelperFilesystem::production()
+                .fence_input(input)
+                .map_err(CommandFailure::Failed)?,
+        )
+    } else {
+        None
+    };
+    let input = fenced.as_deref().unwrap_or(input);
     let mut stdin = tempfile::tempfile().map_err(|e| format!("command input failed: {e}"))?;
     stdin
         .write_all(input)

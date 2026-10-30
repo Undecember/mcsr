@@ -810,6 +810,54 @@ async fn live_runtime_reconciles_a_new_launcher_instance() {
 }
 
 #[tokio::test]
+async fn live_startup_does_not_restart_keyd_after_verified_clear_for_route_setup() {
+    use mcsr_toolkit::apply::ApplyCoordinator;
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = config(&temp);
+    config.enable_live_keyd = true;
+    let root = config.managed_dir.join("launcher");
+    fixture_instance(&root, "one");
+    let profile = mcsr_toolkit::profile::Profile::default();
+    let state = mcsr_toolkit::paths::ensure_state(&config.data_home).unwrap();
+    let runner = Arc::new(FakeKeyd::default());
+    let keyd = mcsr_toolkit::keyd::KeydController::new(&state, runner.clone(), true);
+    ApplyCoordinator::new(&root, &config.data_home, vec![])
+        .unwrap()
+        .apply(&profile, &keyd)
+        .unwrap();
+    let active = state.join("active-profile.json");
+    fs::write(&active, serde_json::to_vec(&profile).unwrap()).unwrap();
+    fs::set_permissions(&active, fs::Permissions::from_mode(0o600)).unwrap();
+    runner.calls.lock().unwrap().clear();
+    let mut runtime = ServiceRuntime::start_with_runner(
+        config,
+        Arc::new(FakeGnome),
+        Arc::new(FakeMaccel::default()),
+        runner.clone(),
+    )
+    .await
+    .unwrap();
+    let clears = runner
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|call| {
+            call.starts_with("/usr/bin/sudo -n /usr/local/libexec/")
+                && call.ends_with("privileged keyd clear")
+        })
+        .count();
+    assert_eq!(
+        clears,
+        2,
+        "startup should use bootstrap and active-profile clears only; status={:?}; calls={:?}",
+        runtime.focus_status(),
+        runner.calls.lock().unwrap()
+    );
+    runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn live_runtime_finishes_deferred_apply_after_instance_closes() {
     use mcsr_toolkit::apply::ApplyCoordinator;
     let temp = tempfile::tempdir().unwrap();

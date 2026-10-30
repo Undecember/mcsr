@@ -1,3 +1,29 @@
+# Unreleased installer update
+
+Source builds now request live keyd by default. Installation offers the missing
+keyd package, socket-group membership, and backed-up F13–F24 mapping; `--yes`
+accepts prerequisite offers and `--observe-only` opts out of live activation.
+Stale desktop service-manager groups produce a reboot-and-repair instruction.
+Live-only startup failures try verified observe-only fallback and retain a
+pending repair marker. Helper failures retain stderr and exit diagnostics.
+`doctor` distinguishes installation safety checks from live readiness.
+
+`repair` now recovers stale keyd uncertainty records and failed managed keyd
+services before installation preflight. It stops the toolkit, authenticates a
+fixed recovery operation, validates saved configuration, resets the restart
+limit, and verifies daemon and IPC health before clearing the unchanged record.
+Recovery invalidates older queued helper requests; failed checks retain the
+record and leave the toolkit stopped. Profiles and backups remain intact.
+Live startup also reuses its verified keyd clear and preset route configuration,
+preventing redundant daemon restarts from exhausting systemd's start limit.
+When the live service is verified healthy, `doctor` no longer describes its
+expected managed keyd configuration as pending recovery.
+
+These changes are not in the published v0.2.0 assets described below. Automated
+regression checks do not establish the full focus/chat acceptance gate for the
+new installer. An on-device repair and live startup check is recorded in the
+[Wayland acceptance record](../integration/acceptance-wayland.md).
+
 # MCSR Toolkit v0.2.0
 
 [v0.2.0 is published as the latest stable release](https://github.com/Undecember/mcsr/releases/tag/v0.2.0).

@@ -1,6 +1,6 @@
 # MCSR Toolkit
 
-A local setup and keybind configurator for Minecraft speedrunning on Ubuntu GNOME Wayland. Its browser UI edits a saved profile, previews physical → emitted → Minecraft key mappings, and applies or restores instance files. A GNOME Shell extension reports focused Minecraft windows and resize shortcuts. The installed service starts in observe-only mode; live keyd activation is opt-in.
+A local setup and keybind configurator for Minecraft speedrunning on Ubuntu GNOME Wayland. Its browser UI edits a saved profile, previews physical → emitted → Minecraft key mappings, and applies or restores instance files. A GNOME Shell extension reports focused Minecraft windows and resize shortcuts. New source builds install with live keyd enabled after readiness checks. Installation does not apply a profile; mappings require an applied profile and Minecraft focus. Use `install --observe-only` to opt out.
 
 ## Rust executable and release status
 
@@ -34,13 +34,13 @@ The installer uses the executable being run as its artifact. It stages the four 
 
 After the new UUID is ACTIVE, `repair` tightens the toolkit data parent and Rust state directory to owner-only `0700`, preserving their contents and marker. It then disables the legacy `mcsr-toolkit@local` extension, verifies that its D-Bus interface is gone, enables the new UUID, and verifies ACTIVE. Only then does it start authenticated root setup and the user service. The installer verifies the installed executable and helper, exact sudoers policy, resolved systemd command, and local HTTP readiness before clearing the marker. A fresh host may prompt once to install the root-owned bootstrap executable and once for the fixed-target setup transaction. Staging the extension does not start root setup.
 
-The installed executable is `/usr/local/bin/mcsr-toolkit`; the same file is copied to `/usr/local/libexec/mcsr-toolkit` for privileged helper modes. The root policies are `/etc/sudoers.d/mcsr-toolkit-rust-keyd` and `/etc/sudoers.d/mcsr-toolkit-rust-maccel`, embedded from [`packaging/mcsr-toolkit-rust-keyd.sudoers`](packaging/mcsr-toolkit-rust-keyd.sudoers) and [`packaging/mcsr-toolkit-rust-maccel.sudoers`](packaging/mcsr-toolkit-rust-maccel.sudoers). The user unit runs `/usr/local/bin/mcsr-toolkit serve` in observe-only mode. Do not deploy Python helpers or create a Python-specific systemd override.
+The installed executable is `/usr/local/bin/mcsr-toolkit`; the same file is copied to `/usr/local/libexec/mcsr-toolkit` for privileged helper modes. The root policies are `/etc/sudoers.d/mcsr-toolkit-rust-keyd` and `/etc/sudoers.d/mcsr-toolkit-rust-maccel`, embedded from [`packaging/mcsr-toolkit-rust-keyd.sudoers`](packaging/mcsr-toolkit-rust-keyd.sudoers) and [`packaging/mcsr-toolkit-rust-maccel.sudoers`](packaging/mcsr-toolkit-rust-maccel.sudoers). The default user unit runs `/usr/local/bin/mcsr-toolkit serve --enable-live-keyd`. `--observe-only` uses `/usr/local/bin/mcsr-toolkit serve`. Do not deploy Python helpers or create a Python-specific systemd override.
 
 If setup is interrupted, keep `install-pending.json`, the extension lineage manifest, old extension files, and recovery records in place and run the reviewed `repair` workflow. A mismatch in an existing helper, policy, or extension file requires manual review; do not overwrite it to force installation. `repair` resumes interrupted setup and restores a stopped or disabled identical installation. The installer refuses an active legacy service or unresolved Python-era recovery. Python state, profiles, backups, and root recovery records remain available for migration and recovery; do not delete them to make preflight pass.
 
 ## Run and use the UI
 
-Open <http://127.0.0.1:8765/> after installation. The service binds only to loopback. Its observe-only default reports focus and resize events but does not activate keyd game bindings. The UI shows extension connection, discovered instances, keyd state, and recent bridge errors.
+Open <http://127.0.0.1:8765/> after installation. The service binds only to loopback. Live mode allows game bindings only with an applied profile and Minecraft focus. Observe-only mode reports focus and resize events without activating game bindings. The UI shows extension connection, discovered instances, keyd state, and recent bridge errors.
 
 1. Choose **Refresh status**. If the launcher is not detected, enter its launcher root in **MCSRLauncher root override**. This is the directory containing `instances/`, not a per-instance game directory. MCSRLauncher normally stores `launcher/instances/<id>/instance.json` under its working directory.
 2. Edit and save a profile. Minecraft controls come from `minecraft/options.txt`, with `.minecraft/options.txt` as a legacy fallback. The instance must have a matching `instance.json`. The editor supports Minecraft 1.16 keyboard identifiers, modifiers, mouse controls, and unbound controls while preserving other settings and line endings.
@@ -68,7 +68,7 @@ For a decorated XWayland Minecraft client, borderless preparation requires `xpro
 
 ## Managed keyd and F3 priority
 
-Version 0.2.0 embeds a pinned, patched keyd daemon/client. Install still requires the distribution's installed, unmasked `keyd.service`. The toolkit installs `/usr/local/libexec/mcsr-keyd` and selects it through `/etc/systemd/system/keyd.service.d/90-mcsr-toolkit.conf`; it preserves the distribution executable and service enablement. The authenticated helper records the original active state in `/var/lib/mcsr-toolkit/keyd-service.json` and restores it when the owned override is removed. Keep that record for repair or uninstall; foreign overrides and changed managed files require review.
+Version 0.2.0 embeds a pinned, patched keyd daemon/client. Install offers to install the distribution keyd package if `keyd.service` is missing; a masked service requires review. The toolkit installs `/usr/local/libexec/mcsr-keyd` and selects it through `/etc/systemd/system/keyd.service.d/90-mcsr-toolkit.conf`; it preserves the distribution executable and service enablement. The authenticated helper records the original active state in `/var/lib/mcsr-toolkit/keyd-service.json` and restores it when the owned override is removed. Keep that record for repair or uninstall; foreign overrides and changed managed files require review.
 
 Physical resize shortcuts now require live keyd mode and an applied profile. Saving a draft does not change active routing. Holding native F3, or a Crafting key mapped to F3 such as Tab, gives Minecraft priority for **F3+B**, **F3+G**, **F3+F**, **Shift+F3+F**, and **Shift+F3**. Ordinary resize and Shift eye zoom shortcuts resume after release. Typed command/chat input stays physical. This preserves B as a resize shortcut while allowing Tab+B to toggle hitboxes.
 
@@ -78,17 +78,31 @@ The engine event tests, generated-routing tests, and sandbox installer tests do 
 
 ## Live keyd mode and recovery
 
-Live keyd activation requires the supervised focus/chat safety procedure in the [Wayland acceptance record](integration/acceptance-wayland.md) and [focus probe](integration/keyd-focus-probe.md), plus a successful helper and sudoers preflight. Do not enable live mode until those checks are accepted. When authorized, stop the managed unit before changing its mode, then use a systemd user drop-in with this exact command:
+New source builds enable live keyd by default after prerequisite setup and a stable live-status check. The installer offers authenticated distribution package installation, persistent membership in the privileged `keyd` socket group, and the `fkeys:basic_13-24` keyboard option. It preserves unrelated XKB options and input sources. `--yes` accepts these offers for unattended setup; authentication still uses desktop prompts. The published v0.2.0 executable predates this installer update.
 
-```ini
-[Service]
-ExecStart=
-ExecStart=/usr/local/bin/mcsr-toolkit serve --enable-live-keyd
+If account membership changes but the desktop user service manager still has its old groups, installation runs a verified observe-only service and reports **setup pending: reboot required**. Reboot, then rerun `repair`. A failed GNOME routing handshake also tries observe-only fallback and retains a repair marker; inspect the reported error before retrying. A failed fallback uses the existing rollback and recovery workflow. Pending setup returns a nonzero exit status.
+
+To explicitly choose observe-only mode:
+
+```sh
+./mcsr-toolkit repair --observe-only
 ```
 
-Reload and restart the unit, then verify its status. The flag is a local process setting and cannot be enabled through HTTP. Do not run a second service copy beside the installed unit. Restarting in observe-only mode clears old live bindings once and drops the persisted active profile without activating bindings. Restore remains available without the flag.
+This choice persists in the installed unit. A later plain `install` or `repair` requests live mode again. Existing applied profiles can resume under normal focus rules in live mode; the installer does not apply a new profile. Observe-only startup clears old live bindings and the persisted active profile; instance files and backup records remain available for Restore.
 
-If status reports `mode: unsafe`, `unsafe_stop_failure: true`, or `recovery_clear_pending`, stop the toolkit unit and inspect keyd before continuing. Do not start live mode or claim mappings are inactive until keyd state and ordinary input are checked. If keyd is stopped or unhealthy, recover `/etc/keyd` to a known safe configuration before using Restore, because Restore first resets keyd bindings and requires a working daemon. Keep the toolkit stopped if safe ordinary typing cannot be confirmed. For detailed helper recovery behavior and observed limits, see the [Wayland acceptance record](integration/acceptance-wayland.md) and [focus probe](integration/keyd-focus-probe.md).
+Original keyboard settings are stored once in `$XDG_DATA_HOME/mcsr-toolkit/rust-v1/keyboard-settings-before-install.json` (normally under `~/.local/share`). To restore the extended function-key setting, first complete `repair --observe-only`, then run:
+
+```sh
+./mcsr-toolkit restore-keyboard-settings
+```
+
+Restoration preserves current input sources and refuses to discard keyboard-option edits made after setup. The original backup remains available. Package installation and account group membership persist after toolkit uninstall.
+
+`doctor` reports installation safety checks and live prerequisites separately. It reports live readiness only when a running service exposes healthy live status. Installation checks verify a stable live API with connected extension, available keyd, and clear recovery flags; these do not replace the Minecraft focus/chat acceptance procedure in the [Wayland acceptance record](integration/acceptance-wayland.md) and [focus probe](integration/keyd-focus-probe.md).
+
+If status reports `mode: unsafe`, `unsafe_stop_failure: true`, or `recovery_clear_pending`, stop the toolkit unit and inspect keyd before continuing. For a stale `keyd-uncertain.json` record or a keyd restart-limit failure, run `mcsr-toolkit repair`. Repair stops the toolkit, takes its runtime lock, and requests administrator authentication for keyd recovery. The fixed helper validates the managed configuration and saved snapshots, resets keyd's restart limit, restarts the daemon, and verifies service and IPC health. Only after successful recovery does repair remove the unchanged uncertainty record and continue normal installation checks. Profiles and backups are preserved. A busy helper, unsafe configuration, unrelated recovery record, authentication failure, or failed health check leaves recovery blocked; do not manually delete records to bypass these checks. Ordinary focus cleanup does not reset the restart limit. This recovery requires the matching installed toolkit helper and managed keyd; mismatched or untrusted installed files still require review.
+
+Do not claim mappings are inactive until keyd state and ordinary input are checked. If keyd cannot recover because `/etc/keyd` contains unsafe or conflicting configuration, restore it to a known safe configuration before using Restore, because Restore first resets keyd bindings and requires a working daemon. Keep the toolkit stopped if safe ordinary typing cannot be confirmed. For detailed helper recovery behavior and observed limits, see the [Wayland acceptance record](integration/acceptance-wayland.md) and [focus probe](integration/keyd-focus-probe.md).
 
 To return to observe-only mode before repair or reinstall, first confirm the live service has no unresolved keyd or maccel recovery and that normal input works. Inspect the unit's drop-ins and resolved command:
 
@@ -97,14 +111,14 @@ systemctl --user show -P DropInPaths mcsr-toolkit.service
 systemctl --user cat mcsr-toolkit.service
 ```
 
-The Rust installer refuses every service drop-in, including a live-mode override. Stop the unit. Remove only the reviewed live-mode drop-in if its file contains only the `ExecStart` override shown above; for the standard `override.conf` location:
+The Rust installer refuses every service drop-in, including a legacy live-mode override. If upgrading from a manual override, stop the unit and remove only a reviewed drop-in containing solely the toolkit `ExecStart` override; for the standard `override.conf` location:
 
 ```sh
 set -e
 systemctl --user stop mcsr-toolkit.service
 rm -- "$HOME/.config/systemd/user/mcsr-toolkit.service.d/override.conf"
 systemctl --user daemon-reload
-systemctl --user start mcsr-toolkit.service
+./mcsr-toolkit repair --observe-only
 systemctl --user status mcsr-toolkit.service --no-pager
 systemctl --user show -P ExecStart mcsr-toolkit.service
 ```

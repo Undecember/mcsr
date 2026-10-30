@@ -59,21 +59,71 @@ async fn run() -> Result<(), String> {
                 .map_err(|e| e.to_string())?;
             runtime.run().await.map_err(|e| e.to_string())
         }
-        [mode] if ["install", "repair", "uninstall", "doctor"].contains(&mode.as_str()) => {
+        [mode] if mode == "restore-keyboard-settings" => {
+            let home = env::var_os("HOME").ok_or("HOME is required")?;
+            let data_home = env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| Path::new(&home).join(".local/share"));
+            mcsr_toolkit::install_prerequisites::restore_keyboard_settings(&data_home)?;
+            println!("Original extended function-key settings restored. Live routing may require setup again.");
+            Ok(())
+        }
+        [mode, rest @ ..]
+            if ["install", "repair", "uninstall", "doctor"].contains(&mode.as_str()) =>
+        {
             use mcsr_toolkit::install::{self, Artifact, RealSystem};
-            let system = RealSystem::discover().map_err(|e| e.to_string())?;
+            use mcsr_toolkit::install_prerequisites::InstallOptions;
+            let mut options = InstallOptions::default();
+            if ["doctor", "uninstall"].contains(&mode.as_str()) && !rest.is_empty() {
+                return Err(format!("{mode} takes no setup flags"));
+            }
+            for arg in rest {
+                match arg.as_str() {
+                    "--observe-only" if !options.observe_only => options.observe_only = true,
+                    "--yes" if !options.yes => options.yes = true,
+                    _ => return Err(format!("unexpected {mode} argument: {arg}")),
+                }
+            }
+            let system = RealSystem::discover()
+                .map_err(|e| e.to_string())?
+                .with_install_options(options);
             match mode.as_str() {
                 "doctor" => {
+                    use install::System;
                     let report = install::preflight(&system);
-                    if report.ready() {
-                        println!("Preflight ready");
+                    let live_status = report
+                        .live_problems
+                        .is_empty()
+                        .then(|| system.live_service_ready());
+                    // An active managed keyd config is expected while live mode is healthy.
+                    let problems: Vec<_> = report
+                        .problems
+                        .iter()
+                        .filter(|problem| {
+                            !(problem.as_str() == "keyd recovery pending"
+                                && matches!(live_status.as_ref(), Some(Ok(true))))
+                        })
+                        .collect();
+                    if problems.is_empty() {
+                        println!("Installation safety checks passed; prerequisites and live readiness follow");
                     } else {
-                        for problem in &report.problems {
+                        for problem in problems {
                             println!("Preflight: {problem}");
                         }
                     }
                     for observation in &report.observations {
                         println!("Observed: {observation}");
+                    }
+                    if let Some(live_status) = live_status {
+                        match live_status {
+                            Ok(true) => println!("Live mode ready: extension connected, keyd available, recovery clear"),
+                            Ok(false) => println!("Live prerequisites satisfied; live startup has not been verified"),
+                            Err(error) => println!("Live mode pending: {error}"),
+                        }
+                    } else {
+                        for problem in &report.live_problems {
+                            println!("Live mode pending: {problem}");
+                        }
                     }
                     if report.repair_pending
                         && !report
@@ -112,11 +162,11 @@ async fn run() -> Result<(), String> {
             let mut input = Vec::new();
             if args.as_slice() != ["privileged", "keyd", "status"] {
                 std::io::stdin()
-                    .take(16_385)
+                    .take(mcsr_toolkit::keyd_helper::MAX_REQUEST + 1)
                     .read_to_end(&mut input)
                     .map_err(|e| e.to_string())?;
             }
-            if input.len() > 16_384 {
+            if input.len() as u64 > mcsr_toolkit::keyd_helper::MAX_REQUEST {
                 return Err("invalid keyd payload size".into());
             }
             let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
