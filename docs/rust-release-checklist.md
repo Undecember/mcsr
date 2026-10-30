@@ -2,12 +2,16 @@
 
 ## v0.3.0 candidate — 2026-10-30
 
-Status: **approved for local release integration and tagging; publication pending**.
+Status: **[v0.3.0 published as the latest stable release](https://github.com/Undecember/mcsr/releases/tag/v0.3.0)**
+at `2026-10-30T08:16:28Z`; release commit
+`41e5f80d541d11d9d80115a5c0828459c4bc8132`. Release-commit CI, public downloads,
+approved development synchronization and release-workspace cleanup are complete.
 Release branch: `release/v0.3.0`; worktree:
 `target/release-worktrees/v0.3.0/` in the primary checkout.
 Development base: `ff57988debf6ae3745d132a46cfd6f8a2d9f5a51`, verified on remote `dev`.
-The latest public stable release remains v0.2.0. No v0.3.0 remote release branch
-or tag existed when preparation began. `main` remains release-only.
+No v0.3.0 remote release branch or tag existed when preparation began.
+`main` remains release-only. The historical branch/worktree above were removed
+after verified synchronization; staged assets and evidence remain preserved.
 
 ### Scope and preparation
 
@@ -32,9 +36,11 @@ outputs. Runtime sources and dependency versions match the reviewed development 
 - [x] The operator approved release preparation on 2026-10-30: commit preparation,
   squash-merge into release-only `main`, and create annotated tag `v0.3.0`.
   Verify resulting refs directly. Publication remains a separate approval gate.
-- [ ] Obtain publication approval; push main/tag and publish the verified pair.
-- [ ] Verify release-commit CI and unauthenticated public downloads.
-- [ ] Obtain separate main-to-dev synchronization approval before cleanup.
+- [x] Operator approved publication; main/tag were pushed atomically and the
+  verified pair was published as a stable release.
+- [x] Both release-commit CI runs and unauthenticated public downloads passed.
+- [x] Operator separately approved main-to-dev synchronization and cleanup;
+  merge verified and temporary files preserved before workspace removal.
 
 ### Verification and identity
 
@@ -94,6 +100,34 @@ Automatic repair intentionally retains safeguards for helper hash mismatches,
 foreign managed files, malformed recovery records, Python-era recovery and
 uncertain GNOME handoffs. These still require review. Candidate readiness approval
 must explicitly assess the remaining live limits; no full desktop acceptance is claimed.
+
+### Publication, synchronization and cleanup
+
+- Published with `draft: false` and `prerelease: false`; public latest-release
+  metadata resolves to v0.3.0. Main/tag push was atomic. Remote annotated tag
+  object `d968c9987c78033a563715b4810e7372fbc18f9f` resolves to release commit
+  `41e5f80d541d11d9d80115a5c0828459c4bc8132`.
+- Main CI [41025302725](https://github.com/Undecember/mcsr/actions/runs/41025302725)
+  and tag CI [41025302636](https://github.com/Undecember/mcsr/actions/runs/41025302636)
+  passed on the release commit.
+- Exactly two public assets were downloaded without authentication. Both match
+  staged files byte for byte; `sha256sum --check` passed. Executable SHA256 remains
+  `f8e301e371f2d94f1b9e31f51e2fa54d84810eadb5a7af7eb4912f7a7573660c`.
+- Approved synchronization commit `52fa23166771da41a4b47d09d0616fc23f6c3fca` has
+  parents `ff57988` and `41e5f80`; its tree exactly matches the tag. Squash-history
+  conflicts in README, release notes and graph files were resolved to published
+  release versions. Runtime sources merged cleanly. All 457 Rust tests passed
+  before the merge commit; the installed toolkit was stopped for the suite and
+  restarted afterward.
+- The release branch tree was verified identical to the tag before removal.
+  Both release worktrees and local release/v0.3.0 branch were removed after
+  preserving 155 transient graph/browser files under primary
+  `target/release-preparation/v0.3.0-worktree-preservation/`. No remote release
+  branch was created. Primary development cache files were retained.
+- Publication/download/CI and cleanup proof JSON, source manifests, test logs,
+  and the exact staged pair remain under primary `target/release-preparation/`.
+  Publication records are updated on dev; the release tag and main commit remain
+  unchanged. Live acceptance limits above remain applicable.
 
 ## v0.2.0 candidate — 2026-10-30
 
