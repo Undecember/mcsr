@@ -5,6 +5,7 @@ pub mod downloads;
 pub mod focus;
 pub mod gnome;
 pub mod install;
+pub mod install_prerequisites;
 pub mod instances;
 pub mod keyd;
 pub mod keyd_helper;

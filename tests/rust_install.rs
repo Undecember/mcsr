@@ -19,6 +19,8 @@ const MARKER_PATH: &str = "/home/alice/.local/share/mcsr-toolkit/rust-v1/install
 const EXTENSION_DIR: &str =
     "/home/alice/.local/share/gnome-shell/extensions/mcsr-toolkit@undecember.github.io";
 const MANIFEST_PATH: &str = "/home/alice/.local/share/mcsr-toolkit/rust-v1/extension-manifest.json";
+const KEYD_UNCERTAIN: &str = "/home/alice/.local/share/mcsr-toolkit/rust-v1/keyd-uncertain.json";
+const KEYD_UNCERTAIN_BYTES: &[u8] = b"{\"in_flight\":\"07376475-c46b-46b3-aa63-8cca909891a7\"}\n";
 
 struct Fake {
     root: tempfile::TempDir,
@@ -54,6 +56,11 @@ struct Fake {
     resolved_command: Mutex<Option<String>>,
     exit_after_start: Mutex<bool>,
     ready: Mutex<bool>,
+    live_pending: Mutex<Option<String>>,
+    prepared_while_running: Mutex<bool>,
+    live_failure: Mutex<bool>,
+    live_pending_probes: Mutex<usize>,
+    observe_only: Mutex<bool>,
     ready_sequence: Mutex<std::collections::VecDeque<bool>>,
 }
 #[derive(Clone, Copy)]
@@ -125,6 +132,11 @@ impl Fake {
             resolved_command: Mutex::new(None),
             exit_after_start: Mutex::new(false),
             ready: Mutex::new(true),
+            live_pending: Mutex::new(None),
+            prepared_while_running: Mutex::new(false),
+            live_failure: Mutex::new(false),
+            live_pending_probes: Mutex::new(0),
+            observe_only: Mutex::new(false),
             ready_sequence: Mutex::new(std::collections::VecDeque::new()),
         };
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(
@@ -226,6 +238,53 @@ impl Fake {
 }
 
 impl System for Fake {
+    fn lock_service_recovery(&self) -> Result<Box<dyn InstallGuard + '_>, InstallError> {
+        self.step("lock_service_recovery")?;
+        Ok(Box::new(()))
+    }
+    fn recover_keyd(&self) -> Result<(), InstallError> {
+        self.step("recover_keyd")?;
+        if self.fail.lock().unwrap().contains("change_recovery_marker") {
+            self.files
+                .lock()
+                .unwrap()
+                .get_mut(Path::new(KEYD_UNCERTAIN))
+                .unwrap()
+                .bytes = b"{\"in_flight\":\"4269838b-fcee-44df-ae6a-eba62e6c2981\"}\n".to_vec();
+        }
+        self.env.lock().unwrap().keyd_recovery_pending = false;
+        Ok(())
+    }
+    fn managed_keyd_failed(&self) -> Result<bool, InstallError> {
+        Ok(self.fail.lock().unwrap().contains("keyd_start_limit_hit"))
+    }
+    fn install_options(&self) -> mcsr_toolkit::install_prerequisites::InstallOptions {
+        mcsr_toolkit::install_prerequisites::InstallOptions {
+            observe_only: *self.observe_only.lock().unwrap(),
+            yes: false,
+        }
+    }
+    fn prepare_install(&self) -> Result<Option<String>, InstallError> {
+        *self.prepared_while_running.lock().unwrap() = *self.service_running.lock().unwrap();
+        Ok(self.live_pending.lock().unwrap().clone())
+    }
+    fn live_service_ready(&self) -> Result<bool, InstallError> {
+        let mut pending = self.live_pending_probes.lock().unwrap();
+        if *pending > 0 {
+            *pending -= 1;
+            return Err(InstallError::System(
+                "extension_connected: waiting for first heartbeat".into(),
+            ));
+        }
+        if *self.live_failure.lock().unwrap() {
+            Err(InstallError::System(
+                "routing input drain pending; F24 handshake failed".into(),
+            ))
+        } else {
+            self.service_ready()
+        }
+    }
+
     fn lock_install(&self) -> Result<Box<dyn InstallGuard + '_>, InstallError> {
         Ok(Box::new(
             self.operation_lock
@@ -517,14 +576,18 @@ impl System for Fake {
             .lock()
             .unwrap()
             .clone()
-            .unwrap_or_else(|| {
-                if self.get(UNIT_PATH).is_some_and(|file| {
-                    file.bytes == include_bytes!("../packaging/mcsr-toolkit.service")
-                }) {
-                    "/usr/local/bin/mcsr-toolkit serve".into()
-                } else {
-                    "old Python service".into()
+            .unwrap_or_else(|| match self.get(UNIT_PATH) {
+                Some(file) if file.bytes == include_bytes!("../packaging/mcsr-toolkit.service") => {
+                    "/usr/local/bin/mcsr-toolkit serve --enable-live-keyd".into()
                 }
+                Some(file)
+                    if String::from_utf8_lossy(&file.bytes)
+                        == include_str!("../packaging/mcsr-toolkit.service")
+                            .replace(" serve --enable-live-keyd\n", " serve\n") =>
+                {
+                    "/usr/local/bin/mcsr-toolkit serve".into()
+                }
+                _ => "old Python service".into(),
             }))
     }
     fn service_ready(&self) -> Result<bool, InstallError> {
@@ -1892,6 +1955,144 @@ fn doctor_preflight_is_read_only_and_reports_interrupted_install() {
     assert!(fake.events.lock().unwrap().is_empty());
 }
 
+fn stale_keyd_recovery(fake: &Fake) {
+    fake.put(KEYD_UNCERTAIN, KEYD_UNCERTAIN_BYTES);
+    fake.files
+        .lock()
+        .unwrap()
+        .get_mut(Path::new(KEYD_UNCERTAIN))
+        .unwrap()
+        .mode = 0o600;
+}
+
+#[test]
+fn repair_recovers_stale_keyd_uncertainty_before_preflight() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    stale_keyd_recovery(&fake);
+    repair(&fake, &fake.artifact()).unwrap();
+    assert!(fake.get(KEYD_UNCERTAIN).is_none());
+    assert!(*fake.service_running.lock().unwrap());
+}
+
+#[test]
+fn repair_failed_keyd_recovery_keeps_marker_and_service_stopped() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    stale_keyd_recovery(&fake);
+    fake.fail_on("recover_keyd");
+    let error = repair(&fake, &fake.artifact()).unwrap_err().to_string();
+    assert!(error.contains("recover_keyd"), "{error}");
+    assert_eq!(
+        fake.get(KEYD_UNCERTAIN).unwrap().bytes,
+        KEYD_UNCERTAIN_BYTES
+    );
+    assert!(!*fake.service_running.lock().unwrap());
+}
+
+#[test]
+fn repair_refuses_unsafe_or_malformed_keyd_marker_without_stopping_service() {
+    for case in ["foreign", "permissive", "malformed", "extra-field"] {
+        let fake = Fake::new();
+        install(&fake, &fake.artifact()).unwrap();
+        stale_keyd_recovery(&fake);
+        {
+            let mut files = fake.files.lock().unwrap();
+            let marker = files.get_mut(Path::new(KEYD_UNCERTAIN)).unwrap();
+            match case {
+                "foreign" => marker.uid = 12345,
+                "permissive" => marker.mode = 0o644,
+                "malformed" => marker.bytes = b"pending".to_vec(),
+                _ => {
+                    marker.bytes =
+                        br#"{"in_flight":"07376475-c46b-46b3-aa63-8cca909891a7","extra":true}"#
+                            .to_vec()
+                }
+            }
+        }
+        assert!(repair(&fake, &fake.artifact()).is_err(), "{case}");
+        assert!(fake.get(KEYD_UNCERTAIN).is_some(), "{case}");
+        assert!(*fake.service_running.lock().unwrap(), "{case}");
+    }
+}
+
+#[test]
+fn install_does_not_automatically_recover_keyd_uncertainty() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    stale_keyd_recovery(&fake);
+    assert!(install(&fake, &fake.artifact()).is_err());
+    assert_eq!(
+        fake.get(KEYD_UNCERTAIN).unwrap().bytes,
+        KEYD_UNCERTAIN_BYTES
+    );
+}
+
+#[test]
+fn repair_recovers_root_keyd_pending_without_a_user_marker() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    fake.env.lock().unwrap().keyd_recovery_pending = true;
+    repair(&fake, &fake.artifact()).unwrap();
+    assert!(fake.get(KEYD_UNCERTAIN).is_none());
+    assert!(preflight(&fake).ready());
+    assert!(*fake.service_running.lock().unwrap());
+}
+
+#[test]
+fn repair_recovers_failed_managed_keyd_without_existing_recovery_records() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    fake.fail_on("keyd_start_limit_hit");
+    let before = fake.events.lock().unwrap().len();
+    repair(&fake, &fake.artifact()).unwrap();
+    assert!(fake.events.lock().unwrap()[before..]
+        .iter()
+        .any(|event| event == "recover_keyd"));
+    assert!(fake.get(KEYD_UNCERTAIN).is_none());
+    assert!(*fake.service_running.lock().unwrap());
+}
+
+#[test]
+fn repair_preserves_uncertainty_if_runtime_is_busy_or_marker_changes() {
+    for failure in [
+        "lock_service_recovery",
+        "change_recovery_marker",
+        "remove_user",
+    ] {
+        let fake = Fake::new();
+        install(&fake, &fake.artifact()).unwrap();
+        stale_keyd_recovery(&fake);
+        fake.fail_on(failure);
+        assert!(repair(&fake, &fake.artifact()).is_err(), "{failure}");
+        assert!(fake.get(KEYD_UNCERTAIN).is_some(), "{failure}");
+        assert!(!*fake.service_running.lock().unwrap(), "{failure}");
+    }
+}
+
+#[test]
+fn repair_does_not_bypass_other_recovery_or_platform_checks() {
+    for problem in ["maccel", "mutation", "platform"] {
+        let fake = Fake::new();
+        install(&fake, &fake.artifact()).unwrap();
+        stale_keyd_recovery(&fake);
+        match problem {
+            "maccel" => fake.env.lock().unwrap().maccel_recovery_pending = true,
+            "mutation" => fake.put(
+                "/home/alice/.local/share/mcsr-toolkit/rust-v1/mutation.json",
+                b"pending",
+            ),
+            _ => fake.env.lock().unwrap().wayland = false,
+        }
+        assert!(repair(&fake, &fake.artifact()).is_err(), "{problem}");
+        assert_eq!(
+            fake.get(KEYD_UNCERTAIN).unwrap().bytes,
+            KEYD_UNCERTAIN_BYTES
+        );
+        assert!(*fake.service_running.lock().unwrap(), "{problem}");
+    }
+}
+
 #[test]
 fn uninstall_keeps_helper_when_keyd_lineage_remains_even_if_keyd_is_inactive() {
     let fake = Fake::new();
@@ -2204,4 +2405,111 @@ fn managed_keyd_foreign_override_refuses_before_root_setup() {
         fake.get(DROPIN_PATH).unwrap().bytes,
         b"foreign administrator override"
     );
+}
+
+#[test]
+fn fresh_install_enables_live_keyd_by_default() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    let unit = String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes).unwrap();
+    assert!(
+        unit.contains("ExecStart=/usr/local/bin/mcsr-toolkit serve --enable-live-keyd\n"),
+        "{unit}"
+    );
+    assert!(*fake.service_running.lock().unwrap());
+    assert!(fake.get(MARKER_PATH).is_none());
+}
+
+#[test]
+fn stale_session_installs_observe_only_and_keeps_repair_pending() {
+    let fake = Fake::new();
+    *fake.live_pending.lock().unwrap() = Some("reboot required for keyd group; run repair".into());
+    let error = install(&fake, &fake.artifact()).unwrap_err();
+    assert!(matches!(error, InstallError::Staged(_)), "{error}");
+    assert!(error.to_string().contains("reboot"));
+    assert!(!String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
+        .unwrap()
+        .contains("--enable-live-keyd"));
+    assert!(*fake.service_running.lock().unwrap());
+    assert!(fake.get(MARKER_PATH).is_some());
+    *fake.live_pending.lock().unwrap() = None;
+    repair(&fake, &fake.artifact()).unwrap();
+    assert!(String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
+        .unwrap()
+        .contains("--enable-live-keyd"));
+    assert!(fake.get(MARKER_PATH).is_none());
+}
+
+#[test]
+fn live_routing_failure_leaves_verified_observe_service_and_pending_marker() {
+    let fake = Fake::new();
+    *fake.live_failure.lock().unwrap() = true;
+    let error = install(&fake, &fake.artifact()).unwrap_err();
+    assert!(matches!(error, InstallError::Staged(_)), "{error}");
+    assert!(error.to_string().contains("F24 handshake failed"));
+    assert!(*fake.service_running.lock().unwrap());
+    assert!(fake.get(MARKER_PATH).is_some());
+    assert!(!String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
+        .unwrap()
+        .contains("--enable-live-keyd"));
+    assert!(fake.get(HELPER_PATH).is_some());
+}
+
+#[test]
+fn observe_only_opt_out_completes_without_live_probe() {
+    let fake = Fake::new();
+    *fake.observe_only.lock().unwrap() = true;
+    *fake.live_failure.lock().unwrap() = true;
+    install(&fake, &fake.artifact()).unwrap();
+    assert!(!String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
+        .unwrap()
+        .contains("--enable-live-keyd"));
+    assert!(fake.get(MARKER_PATH).is_none());
+}
+
+#[test]
+fn failed_observe_fallback_restores_previous_unit_and_keeps_repair_marker() {
+    let fake = Fake::new();
+    fake.put(UNIT_PATH, b"previous unit");
+    *fake.live_failure.lock().unwrap() = true;
+    *fake.ready.lock().unwrap() = false;
+    let error = install(&fake, &fake.artifact()).unwrap_err();
+    assert!(!matches!(error, InstallError::Staged(_)));
+    assert_eq!(fake.get(UNIT_PATH).unwrap().bytes, b"previous unit");
+    assert!(!*fake.service_running.lock().unwrap());
+    assert!(fake.get(MARKER_PATH).is_some());
+}
+
+#[test]
+fn identical_live_repair_can_fall_back_when_routing_becomes_unavailable() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    *fake.live_failure.lock().unwrap() = true;
+    let error = repair(&fake, &fake.artifact()).unwrap_err();
+    assert!(matches!(error, InstallError::Staged(_)), "{error}");
+    assert!(fake.get(MARKER_PATH).is_some());
+    assert!(*fake.service_running.lock().unwrap());
+    assert!(!String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
+        .unwrap()
+        .contains("--enable-live-keyd"));
+}
+
+#[test]
+fn keyboard_prerequisites_change_only_after_old_service_stops() {
+    let fake = Fake::new();
+    fake.put(UNIT_PATH, b"previous unit");
+    *fake.service_running.lock().unwrap() = true;
+    install(&fake, &fake.artifact()).unwrap();
+    assert!(!*fake.prepared_while_running.lock().unwrap());
+}
+
+#[test]
+fn initial_extension_heartbeat_delay_does_not_force_observe_fallback() {
+    let fake = Fake::new();
+    *fake.live_pending_probes.lock().unwrap() = 3;
+    install(&fake, &fake.artifact()).unwrap();
+    assert!(String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
+        .unwrap()
+        .contains("--enable-live-keyd"));
+    assert!(fake.get(MARKER_PATH).is_none());
 }

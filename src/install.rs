@@ -157,7 +157,33 @@ pub fn classify_root_commit_response(
     }
 }
 pub trait System {
+    fn install_options(&self) -> crate::install_prerequisites::InstallOptions {
+        crate::install_prerequisites::InstallOptions::default()
+    }
+    fn prepare_install(&self) -> Result<Option<String>, InstallError> {
+        Ok(None)
+    }
+    fn live_readiness(&self) -> Vec<String> {
+        vec![]
+    }
+    fn live_service_ready(&self) -> Result<bool, InstallError> {
+        self.service_ready()
+    }
+    fn service_diagnostics(&self) -> String {
+        String::new()
+    }
     fn lock_install(&self) -> Result<Box<dyn InstallGuard + '_>, InstallError>;
+    fn lock_service_recovery(&self) -> Result<Box<dyn InstallGuard + '_>, InstallError> {
+        Err(InstallError::Refused(
+            "service recovery lock unavailable".into(),
+        ))
+    }
+    fn recover_keyd(&self) -> Result<(), InstallError> {
+        Err(InstallError::Refused("keyd recovery unavailable".into()))
+    }
+    fn managed_keyd_failed(&self) -> Result<bool, InstallError> {
+        Ok(false)
+    }
     fn environment(&self) -> Result<Environment, InstallError>;
     fn read(&self, path: &Path) -> Result<Option<FileState>, InstallError>;
     fn write_user(&self, path: &Path, bytes: &[u8], mode: u32) -> Result<(), InstallError>;
@@ -219,6 +245,7 @@ pub struct InstallReport {
     pub problems: Vec<String>,
     pub observations: Vec<String>,
     pub repair_pending: bool,
+    pub live_problems: Vec<String>,
 }
 impl InstallReport {
     pub fn ready(&self) -> bool {
@@ -240,6 +267,7 @@ pub fn preflight(system: &dyn System) -> InstallReport {
         problems: vec![],
         observations: vec![],
         repair_pending: false,
+        live_problems: system.live_readiness(),
     };
     let env = match system.environment() {
         Ok(env) => env,
@@ -388,6 +416,27 @@ fn policy(login: &str) -> [RootFile; 2] {
 fn unit() -> &'static [u8] {
     include_bytes!("../packaging/mcsr-toolkit.service")
 }
+fn observe_unit() -> Vec<u8> {
+    String::from_utf8_lossy(unit())
+        .replace(" serve --enable-live-keyd\n", " serve\n")
+        .into_bytes()
+}
+fn installed_live_mode(system: &dyn System) -> Result<bool, InstallError> {
+    let env = system.environment()?;
+    let installed = system
+        .read(&env.unit_path())?
+        .ok_or_else(|| InstallError::Refused("installed user service unit is missing".into()))?;
+    if installed.bytes == unit() {
+        Ok(true)
+    } else if installed.bytes == observe_unit() {
+        Ok(false)
+    } else {
+        Err(InstallError::Refused(
+            "installed user service unit differs from the reviewed live or observe-only unit"
+                .into(),
+        ))
+    }
+}
 fn archive_files(env: &Environment) -> Result<Vec<(PathBuf, Vec<u8>)>, InstallError> {
     let bytes = crate::assets::extension_archive();
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
@@ -506,7 +555,11 @@ fn restore_user(
 
 fn verify_resolved_command(system: &dyn System) -> Result<(), InstallError> {
     let resolved = system.service_command()?;
-    let expected = "/usr/local/bin/mcsr-toolkit serve";
+    let expected = if installed_live_mode(system)? {
+        "/usr/local/bin/mcsr-toolkit serve --enable-live-keyd"
+    } else {
+        "/usr/local/bin/mcsr-toolkit serve"
+    };
     let exact = resolved.trim() == expected || {
         let path = resolved
             .split_once("path=")
@@ -523,35 +576,62 @@ fn verify_resolved_command(system: &dyn System) -> Result<(), InstallError> {
         Ok(())
     } else {
         Err(InstallError::Refused(format!(
-            "resolved ExecStart is not the observe-only Rust service: {resolved}"
+            "resolved ExecStart differs from the installed Rust service mode: {resolved}"
         )))
     }
 }
 
 fn verify_running_service(system: &dyn System) -> Result<(), InstallError> {
-    for attempt in 0..40 {
+    let live = installed_live_mode(system)?;
+    let attempts = if live { 200 } else { 40 };
+    let mut consecutive_ready = 0;
+    let mut last_issue = String::new();
+    for attempt in 0..attempts {
         if !system.service_active()? {
-            return Err(InstallError::System(
-                "user service did not remain active after start".into(),
-            ));
+            return Err(InstallError::System(format!(
+                "user service did not remain active after start; {last_issue}; {}",
+                system.service_diagnostics()
+            )));
         }
         verify_resolved_command(system)?;
-        if system.service_ready()? {
+        let ready = if live {
+            match system.live_service_ready() {
+                Ok(ready) => ready,
+                Err(error @ InstallError::Refused(_)) => return Err(error),
+                Err(error) => {
+                    // HTTP can become reachable before the first Shell
+                    // heartbeat. Retry within the bounded startup budget.
+                    last_issue = error.to_string();
+                    false
+                }
+            }
+        } else {
+            system.service_ready()?
+        };
+        if ready {
             if !system.service_active()? {
                 return Err(InstallError::System(
                     "user service did not remain active after readiness".into(),
                 ));
             }
             verify_resolved_command(system)?;
-            return Ok(());
+            consecutive_ready += 1;
+            // Require a full second of stable live API health, not a transient
+            // HTTP response from a process about to exit.
+            if !live || consecutive_ready >= 21 {
+                return Ok(());
+            }
+        } else {
+            consecutive_ready = 0;
         }
-        if attempt < 39 {
+        if attempt + 1 < attempts {
             system.wait_readiness_poll();
         }
     }
-    Err(InstallError::System(
-        "user service did not become HTTP ready".into(),
-    ))
+    Err(InstallError::System(format!(
+        "user service did not become HTTP ready; {last_issue}; {}",
+        system.service_diagnostics()
+    )))
 }
 
 fn enable_extension_checked(system: &dyn System, was_enabled: bool) -> Result<bool, InstallError> {
@@ -1014,6 +1094,85 @@ pub fn install(system: &dyn System, artifact: &Artifact) -> Result<(), InstallEr
 pub fn repair(system: &dyn System, artifact: &Artifact) -> Result<(), InstallError> {
     install_inner(system, artifact, true)
 }
+
+fn validate_keyd_uncertainty(state: &FileState) -> Result<(), InstallError> {
+    validate_marker_state(state)?;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Uncertainty {
+        in_flight: String,
+    }
+    let marker: Uncertainty = serde_json::from_slice(&state.bytes).map_err(|_| {
+        InstallError::Refused("invalid keyd uncertainty record; manual review required".into())
+    })?;
+    if !uuid::Uuid::parse_str(&marker.in_flight).is_ok_and(|id| !id.is_nil()) {
+        return Err(InstallError::Refused(
+            "invalid keyd uncertainty operation ID".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn repair_keyd_recovery(system: &dyn System, artifact: &Artifact) -> Result<(), InstallError> {
+    let env = system.environment()?;
+    let path = env
+        .data_home
+        .join("mcsr-toolkit/rust-v1/keyd-uncertain.json");
+    let marker = system.read(&path)?;
+    if marker.is_none() && !env.keyd_recovery_pending && !system.managed_keyd_failed()? {
+        return Ok(());
+    }
+    if let Some(state) = &marker {
+        validate_keyd_uncertainty(state)?;
+    }
+    // Recovery is not permission to bypass unrelated installation safeguards.
+    let marker_problem = format!("unresolved recovery record: {}", path.display());
+    let problems: Vec<_> = preflight(system)
+        .problems
+        .into_iter()
+        .filter(|problem| problem != "keyd recovery pending" && problem != &marker_problem)
+        .collect();
+    if !problems.is_empty() {
+        return Err(InstallError::Refused(problems.join("; ")));
+    }
+    if !verified_helper(system, artifact)? || !verified_managed_files(system)? {
+        return Err(InstallError::Refused(
+            "verified installed helper and managed keyd required for recovery".into(),
+        ));
+    }
+    system.ensure_private_state(&env.data_home)?;
+    // Stop also cancels automatic restarts, including when systemd reports failed.
+    system.service(ServiceAction::Stop)?;
+    if system.service_active()? {
+        return Err(InstallError::Refused(
+            "toolkit still running; keyd recovery blocked".into(),
+        ));
+    }
+    let _service_guard = system.lock_service_recovery()?;
+    // Shutdown may itself have left a new uncertainty record.
+    let marker = match system.read(&path)? {
+        Some(state) => {
+            validate_keyd_uncertainty(&state)?;
+            state
+        }
+        None => {
+            let bytes = format!("{{\"in_flight\":\"{}\"}}\n", uuid::Uuid::new_v4());
+            system.write_user(&path, bytes.as_bytes(), 0o600)?;
+            system
+                .read(&path)?
+                .ok_or_else(|| InstallError::System("keyd recovery marker disappeared".into()))?
+        }
+    };
+    system.recover_keyd()?;
+    if system.read(&path)?.as_ref() != Some(&marker) {
+        return Err(InstallError::Refused(
+            "keyd uncertainty record changed during recovery; retained".into(),
+        ));
+    }
+    system.remove_user(&path)?;
+    Ok(())
+}
+
 fn install_inner(
     system: &dyn System,
     artifact: &Artifact,
@@ -1051,6 +1210,7 @@ fn install_inner(
                 return Ok(());
             }
         }
+        repair_keyd_recovery(system, artifact)?;
     }
     let report = preflight(system);
     if !report.ready() {
@@ -1251,7 +1411,14 @@ fn install_inner(
         );
     }
     let desired_extension_digest = extension_digest(&extension);
-    let mut desired: Vec<(PathBuf, Vec<u8>, u32)> = vec![(env.unit_path(), unit().to_vec(), 0o644)];
+    let mut pending_live = None;
+    let mut live = !system.install_options().observe_only;
+    let desired_unit = if live {
+        unit().to_vec()
+    } else {
+        observe_unit()
+    };
+    let mut desired: Vec<(PathBuf, Vec<u8>, u32)> = vec![(env.unit_path(), desired_unit, 0o644)];
     desired.extend(extension.into_iter().map(|(p, b)| (p, b, 0o644)));
     desired.push((manifest, expected_manifest, 0o600));
     let mut prior = Vec::new();
@@ -1260,6 +1427,8 @@ fn install_inner(
         && helper_exists
         && managed_exists
         && policies_exist
+        && pending_live.is_none()
+        && (!live || report.live_problems.is_empty())
         && !report.repair_pending;
     let legacy_known = system.legacy_extension_known()?;
     let legacy_was_enabled = if legacy_known {
@@ -1282,6 +1451,11 @@ fn install_inner(
             identical = false;
         }
         prior.push((path.clone(), old));
+    }
+    // An unhealthy live installation must take the full repair path so it can
+    // retain a pending marker and establish the observe-only fallback.
+    if identical && live && !system.live_service_ready().unwrap_or(false) {
+        identical = false;
     }
     if identical {
         let prior_service_enabled = system.service_enabled()?;
@@ -1506,6 +1680,13 @@ fn install_inner(
         // Stop the producer before the authenticated helper changes the daemon.
         // The helper releases its keyd operation lock before READY so startup can probe it.
         system.service(ServiceAction::Stop)?;
+        // Host preparation can change the keyboard layout. Keep it inside the
+        // rollback scope, after the previous producer has stopped.
+        pending_live = system.prepare_install()?;
+        live = !system.install_options().observe_only && pending_live.is_none();
+        if !live {
+            system.write_user(&env.unit_path(), &observe_unit(), 0o644)?;
+        }
         root_setup = Some(system.begin_root_setup(artifact)?);
         if !verified_executable(system, Path::new(SERVICE_PATH), artifact)?
             || !verified_helper(system, artifact)?
@@ -1519,9 +1700,33 @@ fn install_inner(
         verify_resolved_command(system)?;
         system.service(ServiceAction::Enable)?;
         system.service(ServiceAction::Start)?;
-        verify_running_service(system)?;
+        if let Err(error) = verify_running_service(system) {
+            if !live || matches!(error, InstallError::Refused(_)) {
+                return Err(error);
+            }
+            // Clear any live producer before fallback. Observe-only startup
+            // performs the existing input cleanup; it must pass independently.
+            system.service(ServiceAction::Stop)?;
+            system.write_user(&env.unit_path(), &observe_unit(), 0o644)?;
+            system.service(ServiceAction::Reload)?;
+            verify_resolved_command(system)?;
+            system.service(ServiceAction::Start)?;
+            verify_running_service(system).map_err(|fallback| {
+                InstallError::System(format!(
+                    "live startup failed: {error}; observe-only fallback failed: {fallback}"
+                ))
+            })?;
+            pending_live = Some(format!(
+                "live startup failed: {error}; review the service journal and run repair"
+            ));
+        }
+        if pending_live.is_some() {
+            system.write_user(&marker, b"{\"phase\":\"repair\"}\n", 0o600)?;
+        }
         root_setup.take().expect("root setup started").commit()?;
-        system.remove_user(&marker)?;
+        if pending_live.is_none() {
+            system.remove_user(&marker)?;
+        }
         Ok(())
     })();
     if let Err(error) = result {
@@ -1594,6 +1799,9 @@ fn install_inner(
                 rollback_errors.join("; ")
             )))
         };
+    }
+    if let Some(reason) = pending_live {
+        return Err(InstallError::Staged(format!("setup pending: {reason}; observe-only service is running with live activation disabled")));
     }
     Ok(())
 }
@@ -1793,6 +2001,7 @@ fn recover_keyd_with(
 pub struct RealSystem {
     env: std::sync::Mutex<Environment>,
     policy_status: PolicyStatus,
+    options: crate::install_prerequisites::InstallOptions,
 }
 fn sync_parent_with(
     path: &Path,
@@ -1815,9 +2024,47 @@ struct RealRootSetup {
     child: std::process::Child,
     input: Option<std::process::ChildStdin>,
     output: std::process::ChildStdout,
+    stderr: std::fs::File,
     finished: bool,
 }
 impl RealRootSetup {
+    fn diagnostic_error(&mut self, message: &str) -> InstallError {
+        use std::os::unix::fs::FileExt;
+
+        // Give an exiting helper a short opportunity to finish writing stderr.
+        // A peer that closes stdout but keeps running must not stall setup.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        let status = loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => break Some(status.to_string()),
+                Err(error) => break Some(format!("child wait failed: {error}")),
+                Ok(None) if std::time::Instant::now() >= deadline => break None,
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        };
+        const MAX_DIAGNOSTIC: usize = 8192;
+        let mut bytes = vec![0; MAX_DIAGNOSTIC + 1];
+        let length = self.stderr.read_at(&mut bytes, 0).unwrap_or(0);
+        let truncated = length > MAX_DIAGNOSTIC;
+        bytes.truncate(length.min(MAX_DIAGNOSTIC));
+        let detail = String::from_utf8_lossy(&bytes)
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect::<String>();
+        let mut result = message.to_string();
+        if let Some(status) = status {
+            result.push_str(&format!(" ({status})"));
+        }
+        if !detail.trim().is_empty() {
+            result.push_str(": ");
+            result.push_str(detail.trim());
+            if truncated {
+                result.push_str(" [stderr truncated]");
+            }
+        }
+        InstallError::System(result)
+    }
+
     fn line(&mut self) -> Result<String, InstallError> {
         use std::os::fd::AsRawFd;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
@@ -1853,18 +2100,14 @@ impl RealRootSetup {
                 .read(&mut byte)
                 .map_err(|e| InstallError::System(e.to_string()))?;
             if count == 0 {
-                return Err(InstallError::System(
-                    "authenticated setup closed before response".into(),
-                ));
+                return Err(self.diagnostic_error("authenticated setup closed before response"));
             }
             line.push(byte[0]);
             if byte[0] == b'\n' {
                 return String::from_utf8(line).map_err(|e| InstallError::System(e.to_string()));
             }
         }
-        Err(InstallError::Refused(
-            "invalid authenticated setup response".into(),
-        ))
+        Err(self.diagnostic_error("invalid authenticated setup response"))
     }
     fn send(&mut self, decision: &str) -> Result<(), InstallError> {
         use std::io::Write;
@@ -1911,16 +2154,24 @@ impl RootSetup for RealRootSetup {
     fn commit(mut self: Box<Self>) -> Result<(), InstallError> {
         self.send("COMMIT\n")?;
         let response = self.line()?;
+        if response != "COMMITTED\n" && response != "ABORTED\n" {
+            return Err(self.diagnostic_error("invalid authenticated root transaction response"));
+        }
         let waited = self.wait().map(|status| status.success());
         self.finished = waited.is_ok();
-        classify_root_commit_response(&response, waited)
+        match classify_root_commit_response(&response, waited) {
+            Err(InstallError::RootAborted(message)) => {
+                let detail = self.diagnostic_error(&message).to_string();
+                Err(InstallError::RootAborted(detail))
+            }
+            Err(InstallError::System(message)) => Err(self.diagnostic_error(&message)),
+            result => result,
+        }
     }
     fn abort(mut self: Box<Self>) -> Result<(), InstallError> {
         self.send("ABORT\n")?;
         if self.line()?.as_str() != "ABORTED\n" {
-            return Err(InstallError::System(
-                "authenticated setup did not abort".into(),
-            ));
+            return Err(self.diagnostic_error("authenticated setup did not abort"));
         }
         self.wait()?;
         self.finished = true;
@@ -1934,11 +2185,16 @@ fn start_root_transaction(uninstall: bool) -> Result<Box<dyn RootSetup>, Install
     if uninstall {
         command.arg("uninstall");
     }
+    let stderr = tempfile::tempfile()
+        .map_err(|e| InstallError::System(format!("authenticated setup diagnostics: {e}")))?;
+    let stderr_child = stderr
+        .try_clone()
+        .map_err(|e| InstallError::System(format!("authenticated setup diagnostics: {e}")))?;
     let mut child = command
         .process_group(0)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::from(stderr_child))
         .spawn()
         .map_err(|e| InstallError::System(format!("authenticated root transaction: {e}")))?;
     let input = child
@@ -1953,12 +2209,13 @@ fn start_root_transaction(uninstall: bool) -> Result<Box<dyn RootSetup>, Install
         child,
         input: Some(input),
         output,
+        stderr,
         finished: false,
     };
     if transaction.line()?.as_str() != "READY\n" {
-        return Err(InstallError::System(
-            "authenticated root transaction did not become ready".into(),
-        ));
+        return Err(
+            transaction.diagnostic_error("authenticated root transaction did not become ready")
+        );
     }
     Ok(Box::new(transaction))
 }
@@ -2106,6 +2363,13 @@ fn http_probe(address: std::net::SocketAddr, timeout: std::time::Duration) -> bo
     false
 }
 impl RealSystem {
+    pub fn with_install_options(
+        mut self,
+        options: crate::install_prerequisites::InstallOptions,
+    ) -> Self {
+        self.options = options;
+        self
+    }
     fn gnome_output(args: &[&str]) -> Result<String, InstallError> {
         run_status_command(
             Path::new("/usr/bin/gnome-extensions"),
@@ -2222,6 +2486,7 @@ impl RealSystem {
         );
         Ok(Self {
             policy_status: root_status.policy,
+            options: crate::install_prerequisites::InstallOptions::default(),
             env: std::sync::Mutex::new(Environment {
                 login,
                 home,
@@ -2418,6 +2683,86 @@ fn read_file_state(path: &Path) -> Result<Option<FileState>, InstallError> {
 }
 
 impl System for RealSystem {
+    fn managed_keyd_failed(&self) -> Result<bool, InstallError> {
+        // Do not start or otherwise take over a distribution-only keyd install.
+        if self
+            .read(Path::new(crate::managed_keyd::BINARY_PATH))?
+            .is_none()
+        {
+            return Ok(false);
+        }
+        Ok(Self::output(
+            "/usr/bin/systemctl",
+            &["show", "-P", "ActiveState", "keyd.service"],
+        )? == "failed")
+    }
+    fn lock_service_recovery(&self) -> Result<Box<dyn InstallGuard + '_>, InstallError> {
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::geteuid() })));
+        let guard =
+            crate::runtime::ServiceLock::acquire(&runtime.join("mcsr-toolkit-service.lock"))
+                .map_err(|error| {
+                    InstallError::Refused(format!("keyd recovery blocked: {error}"))
+                })?;
+        Ok(Box::new(guard))
+    }
+    fn recover_keyd(&self) -> Result<(), InstallError> {
+        eprintln!("Recovering keyd: validating configuration, resetting restart limit, and checking keyboard service health...");
+        run_status_command(
+            Path::new("/usr/bin/pkexec"),
+            &[HELPER_PATH, "privileged", "keyd", "recover"],
+            std::time::Duration::from_secs(120),
+        )?;
+        // Configured files are retained for the applied profile. The locked,
+        // authenticated helper has verified them and cleared dynamic bindings.
+        self.env
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keyd_recovery_pending = false;
+        Ok(())
+    }
+    fn install_options(&self) -> crate::install_prerequisites::InstallOptions {
+        self.options
+    }
+    fn prepare_install(&self) -> Result<Option<String>, InstallError> {
+        let env = self.environment()?;
+        crate::install_prerequisites::prepare(&env.login, &env.data_home, self.options)
+            .map_err(InstallError::System)
+    }
+    fn live_readiness(&self) -> Vec<String> {
+        match self.environment() {
+            Ok(env) => crate::install_prerequisites::inspect(&env.login),
+            Err(error) => vec![error.to_string()],
+        }
+    }
+    fn live_service_ready(&self) -> Result<bool, InstallError> {
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], 8765));
+        match live_http_status(address, std::time::Duration::from_millis(500))? {
+            Some(status) => {
+                validate_live_status(&status)?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+    fn service_diagnostics(&self) -> String {
+        run_status_command(
+            Path::new("/usr/bin/journalctl"),
+            &[
+                "--user",
+                "-u",
+                "mcsr-toolkit.service",
+                "-n",
+                "12",
+                "--no-pager",
+                "-o",
+                "cat",
+            ],
+            std::time::Duration::from_secs(3),
+        )
+        .unwrap_or_else(|error| format!("service journal unavailable: {error}"))
+    }
     fn lock_install(&self) -> Result<Box<dyn InstallGuard + '_>, InstallError> {
         let guard = self.acquire_install_lock()?;
         Ok(Box::new(guard))
@@ -2805,7 +3150,9 @@ impl System for RealSystem {
     }
     fn recover_input(&self) -> Result<(), InstallError> {
         // Do not remove the helper until both recovery paths are verified clear.
-        recover_keyd_with(Self::output)?;
+        recover_keyd_with(|program, args| {
+            run_status_command(Path::new(program), args, std::time::Duration::from_secs(30))
+        })?;
         if Path::new("/run/mcsr-toolkit-maccel").exists() {
             Self::run(
                 "/usr/bin/sudo",
@@ -3296,6 +3643,110 @@ mod tests {
     }
 
     #[test]
+    fn authenticated_setup_eof_reports_helper_stderr_and_exit_status() {
+        use std::os::unix::process::CommandExt;
+        let stderr = tempfile::tempfile().unwrap();
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "printf 'keyd.service missing\\n' >&2; exit 17"])
+            .process_group(0)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::from(stderr.try_clone().unwrap()))
+            .spawn()
+            .unwrap();
+        let mut setup = super::RealRootSetup {
+            input: child.stdin.take(),
+            output: child.stdout.take().unwrap(),
+            child,
+            stderr,
+            finished: false,
+        };
+        let error = setup.line().unwrap_err().to_string();
+        assert!(error.contains("keyd.service missing"), "{error}");
+        assert!(error.contains("17"), "{error}");
+    }
+
+    #[test]
+    fn authenticated_setup_unexpected_commit_response_reports_helper_error() {
+        use std::os::unix::process::CommandExt;
+        let stderr = tempfile::tempfile().unwrap();
+        let mut child = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "read decision; printf 'root rollback failed\\n' >&2; echo INVALID; exit 23",
+            ])
+            .process_group(0)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::from(stderr.try_clone().unwrap()))
+            .spawn()
+            .unwrap();
+        let setup = super::RealRootSetup {
+            input: child.stdin.take(),
+            output: child.stdout.take().unwrap(),
+            child,
+            stderr,
+            finished: false,
+        };
+        let error = super::RootSetup::commit(Box::new(setup))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("root rollback failed"), "{error}");
+        assert!(error.contains("23"), "{error}");
+    }
+
+    #[test]
+    fn authenticated_setup_stderr_is_truncated_without_pipe_blocking() {
+        use std::os::unix::process::CommandExt;
+        let stderr = tempfile::tempfile().unwrap();
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "head -c 131072 /dev/zero | tr '\\000' x >&2; exit 8"])
+            .process_group(0)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::from(stderr.try_clone().unwrap()))
+            .spawn()
+            .unwrap();
+        let mut setup = super::RealRootSetup {
+            input: child.stdin.take(),
+            output: child.stdout.take().unwrap(),
+            child,
+            stderr,
+            finished: false,
+        };
+        let error = setup.line().unwrap_err().to_string();
+        assert!(error.contains("stderr truncated"), "{error}");
+        assert!(error.len() < 8400);
+    }
+
+    #[test]
+    fn invalid_setup_response_does_not_wait_for_a_stuck_child() {
+        use std::os::unix::process::CommandExt;
+        let stderr = tempfile::tempfile().unwrap();
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "read decision; echo INVALID; sleep 10"])
+            .process_group(0)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::from(stderr.try_clone().unwrap()))
+            .spawn()
+            .unwrap();
+        let setup = super::RealRootSetup {
+            input: child.stdin.take(),
+            output: child.stdout.take().unwrap(),
+            child,
+            stderr,
+            finished: false,
+        };
+        let started = std::time::Instant::now();
+        let error = super::RootSetup::commit(Box::new(setup))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("invalid authenticated root transaction response"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
     fn abandoned_setup_terminates_privileged_process_group() {
         use std::os::unix::process::CommandExt;
         let fixture = tempfile::tempdir().unwrap();
@@ -3316,6 +3767,7 @@ mod tests {
             input: child.stdin.take(),
             output: child.stdout.take().unwrap(),
             child,
+            stderr: tempfile::tempfile().unwrap(),
             finished: false,
         };
         drop(setup);
@@ -3363,5 +3815,199 @@ mod tests {
             unsafe { libc::flock(second.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
             0
         );
+    }
+}
+
+fn validate_live_status(status: &serde_json::Value) -> Result<(), InstallError> {
+    let invalid = |reason: &str| InstallError::System(format!("live mode is not ready: {reason}"));
+    if status["live_activation_enabled"].as_bool() != Some(true) {
+        return Err(invalid(
+            "live activation is disabled or status is incomplete",
+        ));
+    }
+    let focus = &status["focus"];
+    for key in ["extension_connected", "keyd_available"] {
+        if focus[key].as_bool() != Some(true) {
+            return Err(invalid(key));
+        }
+    }
+    for key in [
+        "mutation_recovery_pending",
+        "activation_suspended",
+        "recovery_clear_pending",
+        "unsafe_stop_failure",
+    ] {
+        if focus[key].as_bool() != Some(false) {
+            return Err(invalid(key));
+        }
+    }
+    if focus.get("cleanup_error") != Some(&serde_json::Value::Null) {
+        return Err(invalid("input cleanup is unverified"));
+    }
+    for key in ["fifo_errors", "errors"] {
+        if !focus[key]
+            .as_array()
+            .is_some_and(|errors| errors.is_empty())
+        {
+            return Err(invalid(key));
+        }
+    }
+    Ok(())
+}
+
+fn live_http_status(
+    address: std::net::SocketAddr,
+    timeout: std::time::Duration,
+) -> Result<Option<serde_json::Value>, InstallError> {
+    use std::io::Write;
+    let start = std::time::Instant::now();
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&address, timeout) else {
+        return Ok(None);
+    };
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|e| InstallError::System(e.to_string()))?;
+    // HTTP/1.0 avoids chunked framing; Connection: close bounds the response.
+    stream
+        .write_all(
+            format!("GET /api/status HTTP/1.0\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .map_err(|e| InstallError::System(e.to_string()))?;
+    let mut response = Vec::new();
+    loop {
+        let Some(remaining) = timeout
+            .checked_sub(start.elapsed())
+            .filter(|d| !d.is_zero())
+        else {
+            return Ok(None);
+        };
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|e| InstallError::System(e.to_string()))?;
+        let mut block = [0; 4096];
+        match stream.read(&mut block) {
+            Ok(0) => break,
+            Ok(count) => response.extend_from_slice(&block[..count]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                return Ok(None)
+            }
+            Err(error) => return Err(InstallError::System(error.to_string())),
+        }
+        if response.len() > 131_072 {
+            return Err(InstallError::System(
+                "live readiness response is too large".into(),
+            ));
+        }
+    }
+    let Some(end) = response.windows(4).position(|part| part == b"\r\n\r\n") else {
+        return Ok(None);
+    };
+    if !response.starts_with(b"HTTP/1.0 200 ") && !response.starts_with(b"HTTP/1.1 200 ") {
+        return Ok(None);
+    }
+    serde_json::from_slice(&response[end + 4..])
+        .map(Some)
+        .map_err(|e| InstallError::System(format!("invalid live readiness status: {e}")))
+}
+
+#[cfg(test)]
+mod live_readiness_tests {
+    use super::*;
+    fn healthy() -> serde_json::Value {
+        serde_json::json!({"live_activation_enabled":true,"focus":{
+            "mode":"observe-only", "extension_connected":true, "keyd_available":true,
+            "mutation_recovery_pending":false,"cleanup_error":null,
+            "activation_suspended":false,"recovery_clear_pending":false,
+            "unsafe_stop_failure":false,"fifo_errors":[],"errors":[]
+        }})
+    }
+    #[test]
+    fn live_readiness_accepts_idle_without_applying_a_profile() {
+        validate_live_status(&healthy()).unwrap();
+    }
+    #[test]
+    fn live_readiness_rejects_missing_disabled_or_unsafe_status() {
+        for key in ["extension_connected", "keyd_available"] {
+            let mut status = healthy();
+            status["focus"][key] = false.into();
+            assert!(validate_live_status(&status).is_err(), "{key}");
+            status["focus"].as_object_mut().unwrap().remove(key);
+            assert!(validate_live_status(&status).is_err(), "missing {key}");
+        }
+        for key in [
+            "mutation_recovery_pending",
+            "activation_suspended",
+            "recovery_clear_pending",
+            "unsafe_stop_failure",
+        ] {
+            let mut status = healthy();
+            status["focus"][key] = true.into();
+            assert!(validate_live_status(&status).is_err(), "{key}");
+        }
+        for key in ["fifo_errors", "errors"] {
+            let mut status = healthy();
+            status["focus"][key] = serde_json::json!(["failure"]);
+            assert!(validate_live_status(&status).is_err(), "{key}");
+        }
+        let mut status = healthy();
+        status["focus"]["cleanup_error"] = "input safety unverified".into();
+        assert!(validate_live_status(&status).is_err());
+        let mut status = healthy();
+        status["live_activation_enabled"] = false.into();
+        assert!(validate_live_status(&status).is_err());
+        assert!(validate_live_status(&serde_json::json!({})).is_err());
+    }
+    fn http_fixture(body: &[u8]) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = body.to_vec();
+        let thread = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") && request.len() < 1024 {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            assert!(request.ends_with(b"\r\n\r\n"));
+            write!(
+                socket,
+                "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            socket.write_all(&body).unwrap();
+        });
+        (address, thread)
+    }
+    #[test]
+    fn live_http_probe_parses_status_and_validates_negative_health() {
+        for connected in [false, true] {
+            let mut status = healthy();
+            status["focus"]["extension_connected"] = connected.into();
+            let (address, thread) = http_fixture(&serde_json::to_vec(&status).unwrap());
+            let result = live_http_status(address, std::time::Duration::from_secs(2))
+                .unwrap()
+                .unwrap();
+            assert_eq!(validate_live_status(&result).is_ok(), connected);
+            thread.join().unwrap();
+        }
+    }
+    #[test]
+    fn live_http_probe_rejects_malformed_status() {
+        let (address, thread) = http_fixture(b"not JSON");
+        let error = live_http_status(address, std::time::Duration::from_secs(2)).unwrap_err();
+        assert!(error.to_string().contains("invalid live readiness status"));
+        thread.join().unwrap();
     }
 }

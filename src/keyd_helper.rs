@@ -17,6 +17,14 @@ const DEVICE_NAME: &str = "mcsr-toolkit.conf";
 const FRAGMENT_NAME: &str = "mcsr-toolkit";
 const MAX_FRAGMENT: usize = 16_384;
 const MAX_MANIFEST: u64 = 131_072;
+pub const MAX_REQUEST: u64 = 131_072;
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FencedRequest {
+    generation: Option<String>,
+    payload: String,
+}
 
 pub trait DirectorySync: Send + Sync {
     fn sync_dir(&self, path: &Path) -> Result<(), String>;
@@ -43,6 +51,57 @@ pub struct HelperFilesystem {
 }
 
 impl HelperFilesystem {
+    fn generation_path(&self) -> PathBuf {
+        self.lock_path.with_extension("generation")
+    }
+
+    fn generation(&self) -> Result<Option<String>, String> {
+        let path = self.generation_path();
+        self.verify_directory(path.parent().ok_or("unsafe keyd generation path")?, false)?;
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+            Ok(_) => self.verify_file(&path, false, false)?,
+        }
+        let mut bytes = String::new();
+        File::open(path)
+            .map_err(|error| error.to_string())?
+            .take(128)
+            .read_to_string(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        let generation = bytes.trim();
+        uuid::Uuid::parse_str(generation).map_err(|_| "invalid keyd recovery generation")?;
+        Ok(Some(generation.to_owned()))
+    }
+
+    /// Capture before spawning the privileged command, so recovery can revoke it.
+    pub fn fence_input(&self, input: &[u8]) -> Result<Vec<u8>, String> {
+        serde_json::to_vec(&FencedRequest {
+            generation: self.generation()?,
+            payload: std::str::from_utf8(input)
+                .map_err(|_| "invalid keyd request encoding")?
+                .into(),
+        })
+        .map_err(|error| error.to_string())
+    }
+
+    fn advance_generation(&self) -> Result<(), String> {
+        self.generation()?;
+        let path = self.generation_path();
+        let parent = path.parent().ok_or("unsafe keyd generation path")?;
+        let mut file =
+            tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+        file.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o644))
+            .map_err(|error| error.to_string())?;
+        writeln!(file, "{}", uuid::Uuid::new_v4()).map_err(|error| error.to_string())?;
+        file.as_file()
+            .sync_all()
+            .map_err(|error| error.to_string())?;
+        file.persist(&path).map_err(|error| error.to_string())?;
+        self.directory_sync.sync_dir(parent)
+    }
+
     pub fn production() -> Self {
         Self {
             config_dir: PathBuf::from("/etc/keyd"),
@@ -242,6 +301,7 @@ impl HelperSystem for RealSystem {
             "restart" => vec!["/usr/bin/systemctl", "restart", "keyd.service"],
             "is-active" => vec!["/usr/bin/systemctl", "is-active", "--quiet", "keyd.service"],
             "stop" => vec!["/usr/bin/systemctl", "stop", "keyd.service"],
+            "reset-failed" => vec!["/usr/bin/systemctl", "reset-failed", "keyd.service"],
             _ => return Err("invalid keyd service action".into()),
         };
         match run_command(
@@ -667,17 +727,29 @@ fn apply_and_restart(
     Ok(())
 }
 
-/// Returns one JSON response for install/restore, and no output for clear.
+/// Returns one JSON response for install/restore, and no output for clear/recover.
 pub fn dispatch(
     args: &[&str],
     stdin: &[u8],
     fs_adapter: &HelperFilesystem,
     system: &mut dyn HelperSystem,
 ) -> Result<Option<String>, String> {
+    if stdin.len() as u64 > MAX_REQUEST {
+        return Err("invalid keyd request size".into());
+    }
+    let request: Option<FencedRequest> = if stdin.first() == Some(&b'{') {
+        Some(serde_json::from_slice(stdin).map_err(|_| "invalid fenced keyd request")?)
+    } else {
+        None
+    };
+    let stdin = request
+        .as_ref()
+        .map_or(stdin, |request| request.payload.as_bytes());
     let operation = match args {
         ["privileged", "keyd", "install"] if !stdin.is_empty() => "install",
         ["privileged", "keyd", "restore", id] if stdin.is_empty() && valid_id(id) => "restore",
         ["privileged", "keyd", "clear"] if stdin.is_empty() => "clear",
+        ["privileged", "keyd", "recover"] if stdin.is_empty() => "recover",
         ["privileged", "keyd", "status"] if stdin.is_empty() => "status",
         _ => return Err("invalid privileged keyd command or arguments".into()),
     };
@@ -690,12 +762,26 @@ pub fn dispatch(
         if running.dev() != installed.dev() || running.ino() != installed.ino() {
             return Err("keyd helper was replaced or removed while queued".into());
         }
+        if operation != "status" && request.is_none() {
+            return Err("keyd operation requires a fenced request".into());
+        }
+    }
+    if let Some(request) = &request {
+        if request.generation != fs_adapter.generation()? {
+            return Err("keyd operation superseded by recovery".into());
+        }
     }
     if operation == "status" {
         return Ok(Some(status_under_lock(fs_adapter)?.into()));
     }
-    if operation == "clear" {
+    if operation == "clear" || operation == "recover" {
+        if operation == "recover" {
+            fs_adapter.advance_generation()?;
+        }
         let config_safety = (|| -> Result<(), String> {
+            if operation == "recover" {
+                recovery_pending(fs_adapter)?;
+            }
             let keys: HashSet<String> = system.list_keys()?.lines().map(str::to_string).collect();
             current(fs_adapter, &keys)?;
             Ok(())
@@ -708,6 +794,11 @@ pub fn dispatch(
                     "keyd stop failed; input state unsafe: {stop_error}; {error}"
                 )),
             };
+        }
+        // Only explicit, authenticated repair may reset the start limiter.
+        // Ordinary focus cleanup must retain systemd's restart protection.
+        if operation == "recover" && !system.systemctl("reset-failed")? {
+            return Err("keyd start-limit reset failed".into());
         }
         restart_healthy(system)?;
         return Ok(None);
