@@ -1,13 +1,99 @@
 # Rust single-binary release checklist
 
+## v0.3.1 candidate — 2026-11-02
+
+Status: **publication and device installation authorized on 2026-11-02; finalizing release**.
+Release branch: `release/v0.3.1`; isolated workspace in the primary checkout:
+`target/release-worktrees/v0.3.1/`. Base: `c9ea7e94f0e8e3a869d8c749fc7e99307fac3730`,
+matching remote `dev` at preparation. Remote `main` remained
+`41e5f80d541d11d9d80115a5c0828459c4bc8132`; no matching release branch/tag existed.
+The reviewed repair fix was copied from the dirty development workspace without
+committing or discarding its changes. The frozen candidate inputs below identify the exact executable; release preparation
+is committed before integration into release-only main.
+
+### Scope and verification
+
+This patch recovers a persistently disconnected extension heartbeat once, including
+loss during the identical-install stability check. It stops the producer before
+extension release/re-enable, requires stable readiness again, and preserves
+observe-only fallback/markers. Only an otherwise healthy explicit disconnect
+authorizes reconnection. Dependencies, extension/game behavior and all other
+build inputs match the reviewed development workspace. Cargo package/lockfile
+metadata alone changes from `0.3.0` to `0.3.1`.
+
+- [x] Isolate reviewed development changes; bump package/lockfile metadata only.
+- [x] `cargo fmt --check`, Clippy with warnings denied, full Rust suite:
+  **461 tests passed, no failures**.
+- [x] Native keyd: 94 upstream and 28 toolkit event cases, held-key cleanup and IPC reset.
+- [x] Extension/UI JavaScript harnesses, 14 UI unit tests, fixture self-test,
+  and strict schema validation.
+- [x] Isolated browser checks: keyboard, all five mouse buttons, click-through,
+  timeout, shortcuts, profile save and mobile layout. API mocked; browser and
+  temporary static server closed. No real toolkit API was mutated.
+- [x] Optimized build and six release embedded-asset tests.
+- [x] Stage exact executable/checksum; verify all 212 source inputs, dependency
+  preservation, complete extension archive embedding and ELF requirements.
+- [x] Refresh Graphify: 2,903 nodes, 7,098 edges, 130 communities.
+- [x] Independent release review: **PASS**, no actionable findings. Artifact,
+  212 inputs, Cargo metadata/dependencies, embedded archive, logs and stated
+  live/upgrade limits were independently verified.
+- [x] Operator authorized release integration, tagging, publication and device installation on 2026-11-02.
+- [x] Push/publication authorized; later development synchronization remains separate.
+
+Pre-publication rerun: `clean_shutdown_releases_the_service_lock` failed once
+with `service is already running`; its isolated rerun and the subsequent full
+Rust suite passed. Both logs are retained. This intermittent service-lock test
+failure is disclosed; no runtime change was added to this patch for it.
+
+### Artifact identity
+
+| Identity | Value |
+| --- | --- |
+| Package | `0.3.1` |
+| Executable SHA256 | `b8a2e7cbdd3de06fa80ff1ce81033d44188ac6847a9a9807d7ad538420d2954c` |
+| Executable bytes | `14,435,616` |
+| Checksum bytes | `79` |
+| Source-input manifest fingerprint | `fe59d2a7a6643854541901f15c898a815aaa86ccd84779cd2c21b6f4e5b2f099` |
+| Source-input manifest | primary `target/release-preparation/v0.3.1-source-inputs.sha256` |
+| Staged pair | primary `target/release-preparation/v0.3.1/` |
+| Identity/environment/check logs | primary `target/release-preparation/v0.3.1-identity.json` and `v0.3.1-logs/` |
+
+The staged directory contains exactly `mcsr-toolkit` and `mcsr-toolkit.sha256`;
+checksum validation passed and the executable matches the optimized build.
+The 39,191-byte extension archive is embedded byte for byte, SHA256
+`0e395c1dd0e5993e10b2325cda55847d63e483948b2d5e8952f83e24e601ec9a`;
+its three sources and compiled schema are present. ELF NEEDED libraries are
+`libgcc_s.so.1`, `libm.so.6`, `libc.so.6` and `ld-linux-x86-64.so.2`.
+The highest required GLIBC symbol is `2.39`; `ldd` resolves all dependencies.
+No Python runtime library is linked. Checks ran on Ubuntu 26.04.1 LTS x86_64,
+Rust/Cargo 1.99.1, Node.js 26.13.0 and GLib 2.88.0; full versions are retained in the logs.
+Rebuild and refresh the identity if any recorded build input changes.
+
+### Live and upgrade limits
+
+Manual extension disable/re-enable restored the developer host's focus heartbeat,
+after which installed-v0.3.0 repair succeeded. Automated tests establish the new
+reconnection transaction and its failure paths; this exact candidate has not
+been installed or tested with a physical resize shortcut. A prior developer-build
+installation attempt was refused because the existing privileged helper hash
+differed. This candidate preserves that safety check; automatic in-place upgrades
+remain unvalidated. Use the matching installed executable to review recovery,
+and do not overwrite helper files or delete recovery records to force an upgrade.
+Preparation does not modify the installed service. Earlier live limitations in
+the v0.3.0/v0.2.0 sections below remain applicable.
+
 ## v0.3.0 candidate — 2026-10-30
 
-Status: **approved for local release integration and tagging; publication pending**.
+Status: **[v0.3.0 published as the latest stable release](https://github.com/Undecember/mcsr/releases/tag/v0.3.0)**
+at `2026-10-30T08:16:28Z`; release commit
+`41e5f80d541d11d9d80115a5c0828459c4bc8132`. Release-commit CI, public downloads,
+approved development synchronization and release-workspace cleanup are complete.
 Release branch: `release/v0.3.0`; worktree:
 `target/release-worktrees/v0.3.0/` in the primary checkout.
 Development base: `ff57988debf6ae3745d132a46cfd6f8a2d9f5a51`, verified on remote `dev`.
-The latest public stable release remains v0.2.0. No v0.3.0 remote release branch
-or tag existed when preparation began. `main` remains release-only.
+No v0.3.0 remote release branch or tag existed when preparation began.
+`main` remains release-only. The historical branch/worktree above were removed
+after verified synchronization; staged assets and evidence remain preserved.
 
 ### Scope and preparation
 
@@ -32,9 +118,11 @@ outputs. Runtime sources and dependency versions match the reviewed development 
 - [x] The operator approved release preparation on 2026-10-30: commit preparation,
   squash-merge into release-only `main`, and create annotated tag `v0.3.0`.
   Verify resulting refs directly. Publication remains a separate approval gate.
-- [ ] Obtain publication approval; push main/tag and publish the verified pair.
-- [ ] Verify release-commit CI and unauthenticated public downloads.
-- [ ] Obtain separate main-to-dev synchronization approval before cleanup.
+- [x] Operator approved publication; main/tag were pushed atomically and the
+  verified pair was published as a stable release.
+- [x] Both release-commit CI runs and unauthenticated public downloads passed.
+- [x] Operator separately approved main-to-dev synchronization and cleanup;
+  merge verified and temporary files preserved before workspace removal.
 
 ### Verification and identity
 
@@ -94,6 +182,34 @@ Automatic repair intentionally retains safeguards for helper hash mismatches,
 foreign managed files, malformed recovery records, Python-era recovery and
 uncertain GNOME handoffs. These still require review. Candidate readiness approval
 must explicitly assess the remaining live limits; no full desktop acceptance is claimed.
+
+### Publication, synchronization and cleanup
+
+- Published with `draft: false` and `prerelease: false`; public latest-release
+  metadata resolves to v0.3.0. Main/tag push was atomic. Remote annotated tag
+  object `d968c9987c78033a563715b4810e7372fbc18f9f` resolves to release commit
+  `41e5f80d541d11d9d80115a5c0828459c4bc8132`.
+- Main CI [41025302725](https://github.com/Undecember/mcsr/actions/runs/41025302725)
+  and tag CI [41025302636](https://github.com/Undecember/mcsr/actions/runs/41025302636)
+  passed on the release commit.
+- Exactly two public assets were downloaded without authentication. Both match
+  staged files byte for byte; `sha256sum --check` passed. Executable SHA256 remains
+  `f8e301e371f2d94f1b9e31f51e2fa54d84810eadb5a7af7eb4912f7a7573660c`.
+- Approved synchronization commit `52fa23166771da41a4b47d09d0616fc23f6c3fca` has
+  parents `ff57988` and `41e5f80`; its tree exactly matches the tag. Squash-history
+  conflicts in README, release notes and graph files were resolved to published
+  release versions. Runtime sources merged cleanly. All 457 Rust tests passed
+  before the merge commit; the installed toolkit was stopped for the suite and
+  restarted afterward.
+- The release branch tree was verified identical to the tag before removal.
+  Both release worktrees and local release/v0.3.0 branch were removed after
+  preserving 155 transient graph/browser files under primary
+  `target/release-preparation/v0.3.0-worktree-preservation/`. No remote release
+  branch was created. Primary development cache files were retained.
+- Publication/download/CI and cleanup proof JSON, source manifests, test logs,
+  and the exact staged pair remain under primary `target/release-preparation/`.
+  Publication records are updated on dev; the release tag and main commit remain
+  unchanged. Live acceptance limits above remain applicable.
 
 ## v0.2.0 candidate — 2026-10-30
 

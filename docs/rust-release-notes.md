@@ -1,8 +1,31 @@
+# MCSR Toolkit v0.3.1
+
+MCSR Toolkit v0.3.1 adds automatic recovery of a disconnected GNOME extension focus heartbeat.
+
+## Changes since v0.3.0
+
+- After the normal startup wait, installation or repair stops the input producer, disables the toolkit extension, verifies release of its D-Bus interface, re-enables it, and restarts the service. Stable live readiness is required again before success.
+- Reconnection is attempted once, and only for an explicitly disconnected heartbeat in an otherwise healthy status response. Transient startup delays and unrelated keyd/routing failures retain their existing behavior.
+- A heartbeat lost during the identical-install stability check also enters the full recovery transaction. Persistent failures retain observe-only fallback and the repair marker, with logout/login guidance when reconnection fails.
+
+## Verification and limits
+
+Release executable SHA256: `b8a2e7cbdd3de06fa80ff1ce81033d44188ac6847a9a9807d7ad538420d2954c`.
+
+The full verification and exact artifact identity are recorded in the [candidate checklist](rust-release-checklist.md#v031-candidate--2026-11-02). Dependencies, game behavior, and extension sources are unchanged from v0.3.0.
+
+On the developer host, manual extension disable/re-enable restored the missing heartbeat; the subsequent installed-v0.3.0 repair passed. This is supporting diagnosis, not a live acceptance run of this candidate's automatic reconnection. The earlier developer build could not be installed because the existing privileged helper hash differed. This candidate preserves that check: use the matching installed executable for recovery review; do not overwrite helper files or delete recovery records to force an upgrade. Automatic in-place upgrades remain unvalidated.
+
+No candidate installation, physical resize-key test, or new GNOME/Minecraft desktop acceptance is claimed. The v0.3.0/v0.2.0 limitations below remain applicable. The existing installed service is outside this release preparation.
+
+---
+
 # MCSR Toolkit v0.3.0
 
 Prepared from development commit `ff57988debf6ae3745d132a46cfd6f8a2d9f5a51`.
-Approved for local release integration and tagging on 2026-10-30.
-Publication remains pending.
+[v0.3.0 is published as the latest stable release](https://github.com/Undecember/mcsr/releases/tag/v0.3.0)
+at `2026-10-30T08:16:28Z`, release commit `41e5f80d541d11d9d80115a5c0828459c4bc8132`.
+Both release CI runs passed and unauthenticated public downloads match the staged assets.
 
 Installation now requests live keyd by default. Installation offers the missing
 keyd package, socket-group membership, and backed-up F13–F24 mapping; `--yes`
@@ -31,7 +54,7 @@ regression checks do not establish the full focus/chat acceptance gate for the
 new installer. An on-device repair and live startup check is recorded in the
 [Wayland acceptance record](../integration/acceptance-wayland.md).
 
-Candidate artifact: `mcsr-toolkit`, SHA256 `f8e301e371f2d94f1b9e31f51e2fa54d84810eadb5a7af7eb4912f7a7573660c`.
+Release artifact: `mcsr-toolkit`, SHA256 `f8e301e371f2d94f1b9e31f51e2fa54d84810eadb5a7af7eb4912f7a7573660c`.
 Build-input fingerprint: `3105c40333c6e3998cd26a1d7fa422ddd9f841dd75adc0c727959c728c8b0b09` (212 files).
 The executable requires GLIBC 2.39 on the verified x86_64 Linux host.
 See the [candidate checklist](rust-release-checklist.md#v030-candidate--2026-10-30)
@@ -41,7 +64,7 @@ applicable, including Alt+Tab with Tab-to-F3, F13–F24 translation and native f
 
 # MCSR Toolkit v0.2.0
 
-[v0.2.0 is published as the latest stable release](https://github.com/Undecember/mcsr/releases/tag/v0.2.0).
+[v0.2.0 is published as a stable release](https://github.com/Undecember/mcsr/releases/tag/v0.2.0).
 MCSR Toolkit v0.2.0 targets Ubuntu GNOME Shell 50 on x86_64 Wayland. Both release
 CI runs passed and both unauthenticated public downloads match the reviewed
 assets. Exact identity and publication verification are recorded in

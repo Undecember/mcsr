@@ -59,6 +59,9 @@ struct Fake {
     live_pending: Mutex<Option<String>>,
     prepared_while_running: Mutex<bool>,
     live_failure: Mutex<bool>,
+    stale_focus_connection: Mutex<bool>,
+    healthy_before_disconnect: Mutex<usize>,
+    reconnect_no_effect: Mutex<bool>,
     live_pending_probes: Mutex<usize>,
     observe_only: Mutex<bool>,
     ready_sequence: Mutex<std::collections::VecDeque<bool>>,
@@ -135,6 +138,9 @@ impl Fake {
             live_pending: Mutex::new(None),
             prepared_while_running: Mutex::new(false),
             live_failure: Mutex::new(false),
+            stale_focus_connection: Mutex::new(false),
+            healthy_before_disconnect: Mutex::new(0),
+            reconnect_no_effect: Mutex::new(false),
             live_pending_probes: Mutex::new(0),
             observe_only: Mutex::new(false),
             ready_sequence: Mutex::new(std::collections::VecDeque::new()),
@@ -274,6 +280,16 @@ impl System for Fake {
             *pending -= 1;
             return Err(InstallError::System(
                 "extension_connected: waiting for first heartbeat".into(),
+            ));
+        }
+        if *self.stale_focus_connection.lock().unwrap() {
+            let mut healthy = self.healthy_before_disconnect.lock().unwrap();
+            if *healthy > 0 {
+                *healthy -= 1;
+                return self.service_ready();
+            }
+            return Err(InstallError::ExtensionDisconnected(
+                "live mode is not ready: extension_connected".into(),
             ));
         }
         if *self.live_failure.lock().unwrap() {
@@ -546,6 +562,9 @@ impl System for Fake {
         }
         if action == ExtensionAction::Disable && *self.extension_disable_no_effect.lock().unwrap() {
             return Ok(());
+        }
+        if action == ExtensionAction::Disable && !*self.reconnect_no_effect.lock().unwrap() {
+            *self.stale_focus_connection.lock().unwrap() = false;
         }
         if action != ExtensionAction::Enable || !*self.enable_no_effect.lock().unwrap() {
             *self.extension_running.lock().unwrap() = action == ExtensionAction::Enable;
@@ -2447,6 +2466,12 @@ fn live_routing_failure_leaves_verified_observe_service_and_pending_marker() {
     let error = install(&fake, &fake.artifact()).unwrap_err();
     assert!(matches!(error, InstallError::Staged(_)), "{error}");
     assert!(error.to_string().contains("F24 handshake failed"));
+    assert!(!fake
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| e == "extension:Disable"));
     assert!(*fake.service_running.lock().unwrap());
     assert!(fake.get(MARKER_PATH).is_some());
     assert!(!String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
@@ -2512,4 +2537,92 @@ fn initial_extension_heartbeat_delay_does_not_force_observe_fallback() {
         .unwrap()
         .contains("--enable-live-keyd"));
     assert!(fake.get(MARKER_PATH).is_none());
+    assert!(!fake
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| e == "extension:Disable"));
+}
+
+#[test]
+fn repair_reconnects_stale_focus_before_accepting_live_readiness() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    *fake.stale_focus_connection.lock().unwrap() = true;
+    fake.events.lock().unwrap().clear();
+    repair(&fake, &fake.artifact()).unwrap();
+    assert!(!*fake.stale_focus_connection.lock().unwrap());
+    assert!(*fake.service_running.lock().unwrap());
+    assert!(fake.get(MARKER_PATH).is_none());
+    assert!(String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
+        .unwrap()
+        .contains("--enable-live-keyd"));
+    let events = fake.events.lock().unwrap();
+    let disable = events
+        .iter()
+        .position(|e| e == "extension:Disable")
+        .unwrap();
+    assert_eq!(events[..disable].last().unwrap(), "service:Stop");
+    assert!(events[disable + 1..]
+        .iter()
+        .any(|e| e == "extension:Enable"));
+}
+
+#[test]
+fn persistent_focus_disconnect_retries_once_then_falls_back() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    *fake.stale_focus_connection.lock().unwrap() = true;
+    *fake.reconnect_no_effect.lock().unwrap() = true;
+    fake.events.lock().unwrap().clear();
+    let error = repair(&fake, &fake.artifact()).unwrap_err();
+    assert!(matches!(error, InstallError::Staged(_)), "{error}");
+    assert!(fake.get(MARKER_PATH).is_some());
+    assert!(*fake.service_running.lock().unwrap());
+    assert!(!String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
+        .unwrap()
+        .contains("--enable-live-keyd"));
+    assert_eq!(
+        fake.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e.as_str() == "extension:Disable")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn reconnect_does_not_reenable_extension_that_failed_to_release() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    *fake.stale_focus_connection.lock().unwrap() = true;
+    *fake.extension_disable_no_effect.lock().unwrap() = true;
+    fake.events.lock().unwrap().clear();
+    let error = repair(&fake, &fake.artifact()).unwrap_err();
+    assert!(matches!(error, InstallError::Staged(_)), "{error}");
+    assert!(error.to_string().contains("did not release"));
+    assert!(!fake
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| e == "extension:Enable"));
+    assert!(fake.get(MARKER_PATH).is_some());
+}
+
+#[test]
+fn identical_repair_recovers_disconnect_during_stability_check() {
+    let fake = Fake::new();
+    install(&fake, &fake.artifact()).unwrap();
+    *fake.stale_focus_connection.lock().unwrap() = true;
+    *fake.healthy_before_disconnect.lock().unwrap() = 1;
+    repair(&fake, &fake.artifact()).unwrap();
+    assert!(!*fake.stale_focus_connection.lock().unwrap());
+    assert!(fake.get(MARKER_PATH).is_none());
+    assert!(String::from_utf8(fake.get(UNIT_PATH).unwrap().bytes)
+        .unwrap()
+        .contains("--enable-live-keyd"));
 }

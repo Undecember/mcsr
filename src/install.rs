@@ -25,15 +25,18 @@ pub enum ExtensionState {
 pub enum InstallError {
     Refused(String),
     System(String),
+    ExtensionDisconnected(String),
     RootAborted(String),
     Staged(String),
 }
 impl fmt::Display for InstallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Refused(s) | Self::System(s) | Self::RootAborted(s) | Self::Staged(s) => {
-                f.write_str(s)
-            }
+            Self::Refused(s)
+            | Self::System(s)
+            | Self::ExtensionDisconnected(s)
+            | Self::RootAborted(s)
+            | Self::Staged(s) => f.write_str(s),
         }
     }
 }
@@ -586,6 +589,7 @@ fn verify_running_service(system: &dyn System) -> Result<(), InstallError> {
     let attempts = if live { 200 } else { 40 };
     let mut consecutive_ready = 0;
     let mut last_issue = String::new();
+    let mut disconnected = false;
     for attempt in 0..attempts {
         if !system.service_active()? {
             return Err(InstallError::System(format!(
@@ -596,11 +600,15 @@ fn verify_running_service(system: &dyn System) -> Result<(), InstallError> {
         verify_resolved_command(system)?;
         let ready = if live {
             match system.live_service_ready() {
-                Ok(ready) => ready,
+                Ok(ready) => {
+                    disconnected = false;
+                    ready
+                }
                 Err(error @ InstallError::Refused(_)) => return Err(error),
                 Err(error) => {
                     // HTTP can become reachable before the first Shell
                     // heartbeat. Retry within the bounded startup budget.
+                    disconnected = matches!(error, InstallError::ExtensionDisconnected(_));
                     last_issue = error.to_string();
                     false
                 }
@@ -628,10 +636,15 @@ fn verify_running_service(system: &dyn System) -> Result<(), InstallError> {
             system.wait_readiness_poll();
         }
     }
-    Err(InstallError::System(format!(
+    let detail = format!(
         "user service did not become HTTP ready; {last_issue}; {}",
         system.service_diagnostics()
-    )))
+    );
+    Err(if disconnected {
+        InstallError::ExtensionDisconnected(detail)
+    } else {
+        InstallError::System(detail)
+    })
 }
 
 fn enable_extension_checked(system: &dyn System, was_enabled: bool) -> Result<bool, InstallError> {
@@ -710,6 +723,23 @@ fn wait_new_active(system: &dyn System) -> Result<(), InstallError> {
     }
     Err(InstallError::System(
         "GNOME extension did not become ACTIVE".into(),
+    ))
+}
+
+fn wait_new_released(system: &dyn System) -> Result<(), InstallError> {
+    for attempt in 0..40 {
+        if !system.extension_enabled()?
+            && system.extension_state()? == ExtensionState::Inactive
+            && !system.toolkit_object_exported()?
+        {
+            return Ok(());
+        }
+        if attempt < 39 {
+            system.wait_readiness_poll();
+        }
+    }
+    Err(InstallError::System(
+        "GNOME extension did not release its focus connection".into(),
     ))
 }
 
@@ -1526,9 +1556,15 @@ fn install_inner(
                     rollback_errors.join("; ")
                 )));
             }
-            return Err(error);
+            if !matches!(error, InstallError::ExtensionDisconnected(_)) {
+                return Err(error);
+            }
+            // A heartbeat can expire after the identical-install precheck.
+            // With the fast-path changes rolled back, use the transaction below
+            // so reconnection and observe-only fallback retain their safeguards.
+        } else {
+            return Ok(());
         }
-        return Ok(());
     }
     for rule in &rules {
         system.validate_sudoers(&rule.bytes)?;
@@ -1700,7 +1736,27 @@ fn install_inner(
         verify_resolved_command(system)?;
         system.service(ServiceAction::Enable)?;
         system.service(ServiceAction::Start)?;
-        if let Err(error) = verify_running_service(system) {
+        let mut startup = verify_running_service(system);
+        if live && matches!(startup, Err(InstallError::ExtensionDisconnected(_))) {
+            // The extension can remain ACTIVE with a stale FIFO channel. Stop
+            // the input producer before releasing and reconnecting its consumer.
+            // This is deliberately one retry, inside the existing rollback scope.
+            extension_handoff_started = true;
+            startup = (|| {
+                system.service(ServiceAction::Stop)?;
+                system.extension(ExtensionAction::Disable)?;
+                wait_new_released(system)?;
+                enable_extension_checked(system, false)?;
+                system.service(ServiceAction::Start)?;
+                verify_running_service(system)
+            })().map_err(|error| match error {
+                error @ InstallError::Refused(_) => error,
+                error => InstallError::System(format!(
+                    "GNOME extension reconnection failed: {error}; log out, log back in, then run mcsr-toolkit repair"
+                )),
+            });
+        }
+        if let Err(error) = startup {
             if !live || matches!(error, InstallError::Refused(_)) {
                 return Err(error);
             }
@@ -3826,10 +3882,8 @@ fn validate_live_status(status: &serde_json::Value) -> Result<(), InstallError> 
         ));
     }
     let focus = &status["focus"];
-    for key in ["extension_connected", "keyd_available"] {
-        if focus[key].as_bool() != Some(true) {
-            return Err(invalid(key));
-        }
+    if focus["keyd_available"].as_bool() != Some(true) {
+        return Err(invalid("keyd_available"));
     }
     for key in [
         "mutation_recovery_pending",
@@ -3852,7 +3906,14 @@ fn validate_live_status(status: &serde_json::Value) -> Result<(), InstallError> 
             return Err(invalid(key));
         }
     }
-    Ok(())
+    // Only a complete, otherwise healthy response may authorize reconnection.
+    match focus["extension_connected"].as_bool() {
+        Some(true) => Ok(()),
+        Some(false) => Err(InstallError::ExtensionDisconnected(
+            "live mode is not ready: extension_connected".into(),
+        )),
+        None => Err(invalid("extension_connected is missing or invalid")),
+    }
 }
 
 fn live_http_status(
@@ -3930,6 +3991,29 @@ mod live_readiness_tests {
     #[test]
     fn live_readiness_accepts_idle_without_applying_a_profile() {
         validate_live_status(&healthy()).unwrap();
+    }
+    #[test]
+    fn only_an_otherwise_healthy_disconnect_authorizes_reconnection() {
+        let mut status = healthy();
+        status["focus"]["extension_connected"] = false.into();
+        assert!(matches!(
+            validate_live_status(&status),
+            Err(InstallError::ExtensionDisconnected(_))
+        ));
+        status["focus"]["unsafe_stop_failure"] = true.into();
+        assert!(matches!(
+            validate_live_status(&status),
+            Err(InstallError::System(_))
+        ));
+        status["focus"]["unsafe_stop_failure"] = false.into();
+        status["focus"]
+            .as_object_mut()
+            .unwrap()
+            .remove("extension_connected");
+        assert!(matches!(
+            validate_live_status(&status),
+            Err(InstallError::System(_))
+        ));
     }
     #[test]
     fn live_readiness_rejects_missing_disabled_or_unsafe_status() {
